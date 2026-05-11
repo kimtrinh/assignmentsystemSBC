@@ -37,7 +37,9 @@ function parseHash(): { site?: string; date?: string } {
 }
 
 function setHash(site: string, date: string) {
-  window.history.replaceState(null, "", `#/${site}/${date}`);
+  const next = `#/${site}/${date}`;
+  if (window.location.hash === next) return;
+  window.location.hash = next;
 }
 
 function clearHash() {
