@@ -1,0 +1,79 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model Site {
+  id         String      @id @default(cuid())
+  code       String      @unique
+  name       String
+  shiftSlots ShiftSlot[]
+  days       Day[]
+}
+
+model ShiftSlot {
+  id            String        @id @default(cuid())
+  siteId        String
+  site          Site          @relation(fields: [siteId], references: [id], onDelete: Cascade)
+  label         String
+  team          String?
+  startTime     String
+  endTime       String
+  sortOrder     Int
+  rosterEntries RosterEntry[]
+}
+
+model Day {
+  id            String        @id @default(cuid())
+  siteId        String
+  site          Site          @relation(fields: [siteId], references: [id], onDelete: Cascade)
+  date          String
+  rosterEntries RosterEntry[]
+  assignments   Assignment[]
+  chooseIns     ChooseIn[]
+
+  @@unique([siteId, date])
+}
+
+model RosterEntry {
+  id           String       @id @default(cuid())
+  dayId        String
+  day          Day          @relation(fields: [dayId], references: [id], onDelete: Cascade)
+  shiftSlotId  String
+  shiftSlot    ShiftSlot    @relation(fields: [shiftSlotId], references: [id], onDelete: Cascade)
+  providerName String?
+  assignments  Assignment[]
+  chooseIn     ChooseIn?
+
+  @@unique([dayId, shiftSlotId])
+}
+
+model Assignment {
+  id          String       @id @default(cuid())
+  dayId       String
+  day         Day          @relation(fields: [dayId], references: [id], onDelete: Cascade)
+  hourBlock   Int
+  time        String?
+  bed         String?
+  rosterId    String?
+  rosterEntry RosterEntry? @relation(fields: [rosterId], references: [id], onDelete: SetNull)
+  comments    String?
+  sortOrder   Int          @default(0)
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+}
+
+model ChooseIn {
+  id           String      @id @default(cuid())
+  dayId        String
+  day          Day         @relation(fields: [dayId], references: [id], onDelete: Cascade)
+  rosterId     String      @unique
+  rosterEntry  RosterEntry @relation(fields: [rosterId], references: [id], onDelete: Cascade)
+  timeBed      String?
+  esiOrPatient String?
+  updatedAt    DateTime    @updatedAt
+}
