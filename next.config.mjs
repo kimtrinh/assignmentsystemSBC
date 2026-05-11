@@ -1,7 +1,14 @@
 /** @type {import('next').NextConfig} */
+const isPages = process.env.GITHUB_PAGES === "true";
+const basePath = isPages ? "/assignmentsystemSBC" : "";
+
 const nextConfig = {
+  output: "export",
   reactStrictMode: true,
-  experimental: { typedRoutes: false }
+  trailingSlash: true,
+  basePath,
+  assetPrefix: basePath ? `${basePath}/` : undefined,
+  images: { unoptimized: true }
 };
 
 export default nextConfig;
