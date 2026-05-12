@@ -25,6 +25,14 @@ import {
   saveDay
 } from "@/lib/storage";
 import {
+  appendAuditEntry,
+  fetchAuditLog,
+  fetchDay,
+  isSupabaseConfigured,
+  persistDay,
+  subscribeToDay
+} from "@/lib/sync";
+import {
   effectiveCapacity,
   onShiftSlots,
   predictRotation
@@ -281,6 +289,7 @@ type History = {
 
 type HistoryAction =
   | { type: "load"; state: DayState }
+  | { type: "syncFromRemote"; state: DayState }
   | { type: "mutate"; mutator: (s: DayState) => DayState }
   | { type: "undo" }
   | { type: "redo" };
@@ -289,6 +298,10 @@ function historyReducer(state: History, action: HistoryAction): History {
   switch (action.type) {
     case "load":
       return { current: action.state, past: [], future: [] };
+    case "syncFromRemote":
+      // External update from another browser. Don't pollute the local undo
+      // stack — just replace `current` with what the server says.
+      return { ...state, current: action.state };
     case "mutate": {
       const next = action.mutator(state.current);
       return {
@@ -346,22 +359,52 @@ function DayBoard({
   const [dataVersion, setDataVersion] = useState(0);
 
   useEffect(() => {
+    // Local-first: paint immediately from localStorage, then refresh from
+    // Supabase when configured.
     dispatch({ type: "load", state: loadDay(site.code, date) });
     setAuditLog(loadAuditLog(site.code, date));
     setShowLog(false);
     setDataVersion((v) => v + 1);
+
+    if (!isSupabaseConfigured) return;
+
+    let cancelled = false;
+    fetchDay(site.code, date).then((remote) => {
+      if (cancelled) return;
+      dispatch({ type: "syncFromRemote", state: remote });
+      setDataVersion((v) => v + 1);
+    });
+    fetchAuditLog(site.code, date).then((log) => {
+      if (cancelled) return;
+      setAuditLog(log);
+    });
+
+    const unsubscribe = subscribeToDay(site.code, date, (remote) => {
+      dispatch({ type: "syncFromRemote", state: remote });
+      setDataVersion((v) => v + 1);
+    });
+
+    return () => {
+      cancelled = true;
+      unsubscribe();
+    };
   }, [site.code, date]);
 
   useEffect(() => {
     saveDay(state);
+    if (isSupabaseConfigured) {
+      void persistDay(state);
+    }
   }, [state]);
 
   function appendLog(description: string) {
+    const entry: AuditEntry = { timestamp: Date.now(), description };
     setAuditLog((prev) => {
-      const next = [...prev, { timestamp: Date.now(), description }].slice(
-        -MAX_LOG_ENTRIES
-      );
+      const next = [...prev, entry].slice(-MAX_LOG_ENTRIES);
       saveAuditLog(site.code, date, next);
+      if (isSupabaseConfigured) {
+        void appendAuditEntry(site.code, date, entry, next);
+      }
       return next;
     });
   }
