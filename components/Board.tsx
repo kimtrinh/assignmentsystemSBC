@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { HOUR_BLOCKS, hourLabel } from "@/lib/hours";
 import {
+  MAIN_ROTATION_TEAMS,
   SITES,
   TEAM_ORDER,
   getSite,
@@ -490,7 +491,9 @@ function HourBand({
   const placeholders = Array.from({ length: placeholderCount }, (_, i) => maxSort + 1 + i);
   const totalRows = rows.length + placeholders.length;
 
-  const onShift = onShiftSlots(slots, roster, hour);
+  const onShift = onShiftSlots(slots, roster, hour).filter((s) =>
+    MAIN_ROTATION_TEAMS.includes(s.team)
+  );
   const onShiftIds = new Set(onShift.map((s) => s.id));
 
   function dropdownForRow(row: Assignment): ShiftSlot[] {

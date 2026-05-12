@@ -47,6 +47,11 @@ export const SITES: SiteDef[] = [
 
 export const TEAM_ORDER = ["Red", "Blue", "PEDS", "PITT", "FLEX", "DOD"];
 
+// Teams whose providers participate in the Main ED rotation grid.
+// FLEX / PEDS / PITT / DOD are excluded: they cover different patient
+// pools and are not part of the round-robin (see docs/current-system.md §5.1).
+export const MAIN_ROTATION_TEAMS = ["Red", "Blue"];
+
 export function getSite(code: string): SiteDef | undefined {
   return SITES.find((s) => s.code === code);
 }
