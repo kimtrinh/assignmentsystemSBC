@@ -98,7 +98,7 @@ export async function fetchAuditLog(
 
   const { data, error } = await supabase
     .from("audit_log")
-    .select("ts, description")
+    .select("ts, description, user_name")
     .eq("site_code", siteCode)
     .eq("date", date)
     .order("ts", { ascending: true })
@@ -108,10 +108,13 @@ export async function fetchAuditLog(
     console.error("fetchAuditLog failed:", error);
     return loadAuditLogLocal(siteCode, date);
   }
-  return (data ?? []).map((row: { ts: string; description: string }) => ({
-    timestamp: new Date(row.ts).getTime(),
-    description: row.description
-  }));
+  return (data ?? []).map(
+    (row: { ts: string; description: string; user_name: string | null }) => ({
+      timestamp: new Date(row.ts).getTime(),
+      description: row.description,
+      user: row.user_name ?? undefined
+    })
+  );
 }
 
 export async function appendAuditEntry(
@@ -130,7 +133,8 @@ export async function appendAuditEntry(
     site_code: siteCode,
     date,
     ts: new Date(entry.timestamp).toISOString(),
-    description: entry.description
+    description: entry.description,
+    user_name: entry.user ?? null
   });
   if (error) console.error("appendAuditEntry failed:", error);
 }

@@ -41,6 +41,7 @@ export type DayState = {
 export type AuditEntry = {
   timestamp: number;
   description: string;
+  user?: string;
 };
 
 const KEY_PREFIX = "ed-board:v1:";

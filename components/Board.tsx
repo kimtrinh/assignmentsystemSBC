@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useMemo, useReducer, useState } from "react";
+import { useContext, useEffect, useMemo, useReducer, useState } from "react";
+import { IdentityContext } from "@/components/AuthGate";
 import { HOUR_BLOCKS, hourLabel } from "@/lib/hours";
 import {
   MAIN_ROTATION_TEAMS,
@@ -357,6 +358,7 @@ function DayBoard({
   const [auditLog, setAuditLog] = useState<AuditEntry[]>([]);
   const [showLog, setShowLog] = useState(false);
   const [dataVersion, setDataVersion] = useState(0);
+  const { displayName, setDisplayName } = useContext(IdentityContext);
 
   useEffect(() => {
     // Local-first: paint immediately from localStorage, then refresh from
@@ -398,7 +400,11 @@ function DayBoard({
   }, [state]);
 
   function appendLog(description: string) {
-    const entry: AuditEntry = { timestamp: Date.now(), description };
+    const entry: AuditEntry = {
+      timestamp: Date.now(),
+      description,
+      user: displayName || undefined
+    };
     setAuditLog((prev) => {
       const next = [...prev, entry].slice(-MAX_LOG_ENTRIES);
       saveAuditLog(site.code, date, next);
@@ -667,6 +673,16 @@ function DayBoard({
             ) : null}
           </div>
           <div className="flex flex-wrap items-center gap-2 text-sm">
+            <label className="flex items-center gap-1 text-xs text-slate-600">
+              <span>You:</span>
+              <input
+                defaultValue={displayName}
+                onBlur={(e) => setDisplayName(e.target.value)}
+                placeholder="your name"
+                className="w-32 rounded border border-slate-300 px-2 py-1 text-xs"
+                title="Used to label your audit log entries"
+              />
+            </label>
             <button
               onClick={undo}
               disabled={!canUndo}
@@ -1617,6 +1633,13 @@ function AuditLogPanel({
             <span className="w-16 shrink-0 font-mono text-slate-500">
               {formatLogTime(entry.timestamp)}
             </span>
+            {entry.user ? (
+              <span className="w-24 shrink-0 truncate font-medium text-slate-700">
+                {entry.user}
+              </span>
+            ) : (
+              <span className="w-24 shrink-0 text-slate-400">—</span>
+            )}
             <span className="text-slate-800">{entry.description}</span>
           </li>
         ))}
