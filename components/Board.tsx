@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useReducer, useState } from "react";
 import { HOUR_BLOCKS, hourLabel } from "@/lib/hours";
 import {
   MAIN_ROTATION_TEAMS,
@@ -12,12 +12,16 @@ import {
 } from "@/lib/shiftTemplate";
 import {
   type Assignment,
+  type AuditEntry,
   type ChooseIn,
   type DayState,
   type ExtraSlot,
+  MAX_LOG_ENTRIES,
   emptyDay,
+  loadAuditLog,
   loadDay,
   newId,
+  saveAuditLog,
   saveDay
 } from "@/lib/storage";
 import {
@@ -172,6 +176,14 @@ export default function Board() {
     return <Picker onOpen={(s, d) => setHash(s, d)} />;
   }
 
+  const isPrint =
+    typeof window !== "undefined" &&
+    new URLSearchParams(window.location.search).get("print") === "1";
+
+  if (isPrint) {
+    return <PrintBoard site={site} date={route.date} />;
+  }
+
   return (
     <DayBoard
       site={site}
@@ -259,6 +271,58 @@ function Picker({ onOpen }: { onOpen: (site: string, date: string) => void }) {
 
 type RowDraft = Partial<Pick<Assignment, "time" | "bed" | "shiftSlotId" | "comments">>;
 
+const MAX_HISTORY = 50;
+
+type History = {
+  current: DayState;
+  past: DayState[];
+  future: DayState[];
+};
+
+type HistoryAction =
+  | { type: "load"; state: DayState }
+  | { type: "mutate"; mutator: (s: DayState) => DayState }
+  | { type: "undo" }
+  | { type: "redo" };
+
+function historyReducer(state: History, action: HistoryAction): History {
+  switch (action.type) {
+    case "load":
+      return { current: action.state, past: [], future: [] };
+    case "mutate": {
+      const next = action.mutator(state.current);
+      return {
+        current: next,
+        past: [...state.past, state.current].slice(-MAX_HISTORY),
+        future: []
+      };
+    }
+    case "undo": {
+      if (state.past.length === 0) return state;
+      const prev = state.past[state.past.length - 1];
+      return {
+        current: prev,
+        past: state.past.slice(0, -1),
+        future: [...state.future, state.current].slice(-MAX_HISTORY)
+      };
+    }
+    case "redo": {
+      if (state.future.length === 0) return state;
+      const next = state.future[state.future.length - 1];
+      return {
+        current: next,
+        past: [...state.past, state.current].slice(-MAX_HISTORY),
+        future: state.future.slice(0, -1)
+      };
+    }
+  }
+}
+
+function describeHour(hour: number): string {
+  if (hour === 0) return "2400";
+  return `${String(hour).padStart(2, "0")}00`;
+}
+
 function DayBoard({
   site,
   date,
@@ -268,25 +332,89 @@ function DayBoard({
   date: string;
   onLeave: () => void;
 }) {
-  const [state, setState] = useState<DayState>(() => emptyDay(site.code, date));
-  const [rosterVersion, setRosterVersion] = useState(0);
+  const [history, dispatch] = useReducer(historyReducer, undefined, () => ({
+    current: emptyDay(site.code, date),
+    past: [],
+    future: []
+  }));
+  const state = history.current;
+  const canUndo = history.past.length > 0;
+  const canRedo = history.future.length > 0;
+
+  const [auditLog, setAuditLog] = useState<AuditEntry[]>([]);
+  const [showLog, setShowLog] = useState(false);
+  const [dataVersion, setDataVersion] = useState(0);
 
   useEffect(() => {
-    setState(loadDay(site.code, date));
-    setRosterVersion((v) => v + 1);
+    dispatch({ type: "load", state: loadDay(site.code, date) });
+    setAuditLog(loadAuditLog(site.code, date));
+    setShowLog(false);
+    setDataVersion((v) => v + 1);
   }, [site.code, date]);
 
-  function update(mutator: (prev: DayState) => DayState) {
-    setState((prev) => {
-      const next = mutator(prev);
-      saveDay(next);
+  useEffect(() => {
+    saveDay(state);
+  }, [state]);
+
+  function appendLog(description: string) {
+    setAuditLog((prev) => {
+      const next = [...prev, { timestamp: Date.now(), description }].slice(
+        -MAX_LOG_ENTRIES
+      );
+      saveAuditLog(site.code, date, next);
       return next;
     });
   }
 
+  function update(
+    mutator: (prev: DayState) => DayState,
+    description: string,
+    options: { bumpVersion?: boolean } = {}
+  ) {
+    dispatch({ type: "mutate", mutator });
+    appendLog(description);
+    if (options.bumpVersion) setDataVersion((v) => v + 1);
+  }
+
+  function undo() {
+    if (!canUndo) return;
+    dispatch({ type: "undo" });
+    appendLog("Undid last change");
+    setDataVersion((v) => v + 1);
+  }
+
+  function redo() {
+    if (!canRedo) return;
+    dispatch({ type: "redo" });
+    appendLog("Redid change");
+    setDataVersion((v) => v + 1);
+  }
+
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      const meta = e.metaKey || e.ctrlKey;
+      if (!meta) return;
+      const key = e.key.toLowerCase();
+      if (key === "z" && !e.shiftKey) {
+        e.preventDefault();
+        undo();
+      } else if ((key === "z" && e.shiftKey) || key === "y") {
+        e.preventDefault();
+        redo();
+      }
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [canUndo, canRedo]);
+
   const effectiveSlots = useMemo<ShiftSlot[]>(
     () => [...site.slots, ...state.extraSlots],
     [site.slots, state.extraSlots]
+  );
+  const effectiveSlotsLookup = useMemo(
+    () => new Map(effectiveSlots.map((s) => [s.id, s])),
+    [effectiveSlots]
   );
 
   const groupedRoster = useMemo(() => {
@@ -319,17 +447,28 @@ function DayBoard({
   }, [state.assignments]);
 
   function updateRow(id: string, patch: Partial<Assignment>) {
-    update((prev) => ({
-      ...prev,
-      assignments: prev.assignments.map((a) => (a.id === id ? { ...a, ...patch } : a))
-    }));
+    const fields = Object.keys(patch).join(", ");
+    update(
+      (prev) => ({
+        ...prev,
+        assignments: prev.assignments.map((a) =>
+          a.id === id ? { ...a, ...patch } : a
+        )
+      }),
+      `Edited row (${fields || "row"})`
+    );
   }
 
   function deleteRow(id: string) {
-    update((prev) => ({
-      ...prev,
-      assignments: prev.assignments.filter((a) => a.id !== id)
-    }));
+    const row = state.assignments.find((a) => a.id === id);
+    const where = row ? ` at ${describeHour(row.hourBlock)}` : "";
+    update(
+      (prev) => ({
+        ...prev,
+        assignments: prev.assignments.filter((a) => a.id !== id)
+      }),
+      `Deleted row${where}`
+    );
   }
 
   function materializeRow(hourBlock: number, sortOrder: number, patch: RowDraft) {
@@ -342,29 +481,44 @@ function DayBoard({
       comments: patch.comments ?? "",
       sortOrder
     };
-    update((prev) => ({ ...prev, assignments: [...prev.assignments, row] }));
+    update(
+      (prev) => ({ ...prev, assignments: [...prev.assignments, row] }),
+      `Added row at ${describeHour(hourBlock)}`
+    );
   }
 
   function updateRoster(slotId: string, providerName: string) {
-    update((prev) => {
-      const roster = { ...prev.roster };
-      if (providerName.trim()) roster[slotId] = providerName.trim();
-      else delete roster[slotId];
-      return { ...prev, roster };
-    });
+    const trimmed = providerName.trim();
+    const slot = effectiveSlotsLookup.get(slotId);
+    const label = slot?.label ?? slotId;
+    const description = trimmed
+      ? `Set ${label} to ${trimmed}`
+      : `Cleared ${label}`;
+    update(
+      (prev) => {
+        const roster = { ...prev.roster };
+        if (trimmed) roster[slotId] = trimmed;
+        else delete roster[slotId];
+        return { ...prev, roster };
+      },
+      description
+    );
   }
 
   function applyRosterPaste(updates: { slotId: string; provider: string }[]) {
-    update((prev) => {
-      const roster = { ...prev.roster };
-      for (const { slotId, provider } of updates) {
-        const trimmed = provider.trim();
-        if (trimmed) roster[slotId] = trimmed;
-        else delete roster[slotId];
-      }
-      return { ...prev, roster };
-    });
-    setRosterVersion((v) => v + 1);
+    update(
+      (prev) => {
+        const roster = { ...prev.roster };
+        for (const { slotId, provider } of updates) {
+          const trimmed = provider.trim();
+          if (trimmed) roster[slotId] = trimmed;
+          else delete roster[slotId];
+        }
+        return { ...prev, roster };
+      },
+      `Pasted schedule (${updates.length} provider${updates.length === 1 ? "" : "s"})`,
+      { bumpVersion: true }
+    );
   }
 
   function addExtraSlot(input: { name: string; timeRange: string; team: string }) {
@@ -380,60 +534,85 @@ function DayBoard({
       startTime: parsed.startTime,
       endTime: parsed.endTime
     };
-    update((prev) => ({
-      ...prev,
-      extraSlots: [...prev.extraSlots, slot],
-      roster: { ...prev.roster, [id]: name }
-    }));
-    setRosterVersion((v) => v + 1);
+    update(
+      (prev) => ({
+        ...prev,
+        extraSlots: [...prev.extraSlots, slot],
+        roster: { ...prev.roster, [id]: name }
+      }),
+      `Added ad-hoc ${parsed.canonical} (${input.team}): ${name}`,
+      { bumpVersion: true }
+    );
   }
 
   function removeExtraSlot(slotId: string) {
-    update((prev) => {
-      const roster = { ...prev.roster };
-      delete roster[slotId];
-      return {
-        ...prev,
-        extraSlots: prev.extraSlots.filter((s) => s.id !== slotId),
-        roster
-      };
-    });
-    setRosterVersion((v) => v + 1);
+    const slot = state.extraSlots.find((s) => s.id === slotId);
+    const label = slot ? `${slot.label} (${slot.team})` : "shift";
+    update(
+      (prev) => {
+        const roster = { ...prev.roster };
+        delete roster[slotId];
+        return {
+          ...prev,
+          extraSlots: prev.extraSlots.filter((s) => s.id !== slotId),
+          roster
+        };
+      },
+      `Removed ad-hoc ${label}`,
+      { bumpVersion: true }
+    );
   }
 
   function clearProvider(slotId: string) {
-    update((prev) => {
-      const roster = { ...prev.roster };
-      delete roster[slotId];
-      return { ...prev, roster };
-    });
-    setRosterVersion((v) => v + 1);
+    const slot = effectiveSlotsLookup.get(slotId);
+    const label = slot?.label ?? slotId;
+    const previous = state.roster[slotId];
+    update(
+      (prev) => {
+        const roster = { ...prev.roster };
+        delete roster[slotId];
+        return { ...prev, roster };
+      },
+      previous ? `Cleared ${previous} from ${label}` : `Cleared ${label}`,
+      { bumpVersion: true }
+    );
   }
 
   function updateChooseIn(slotId: string, patch: Partial<ChooseIn>) {
-    update((prev) => {
-      const current = prev.chooseIns[slotId] ?? { timeBed: "", esiOrPatient: "" };
-      const next: ChooseIn = { ...current, ...patch };
-      const chooseIns = { ...prev.chooseIns };
-      if (!next.timeBed && !next.esiOrPatient) delete chooseIns[slotId];
-      else chooseIns[slotId] = next;
-      return { ...prev, chooseIns };
-    });
+    const slot = effectiveSlotsLookup.get(slotId);
+    const label = state.roster[slotId] ?? slot?.label ?? slotId;
+    update(
+      (prev) => {
+        const current = prev.chooseIns[slotId] ?? { timeBed: "", esiOrPatient: "" };
+        const next: ChooseIn = { ...current, ...patch };
+        const chooseIns = { ...prev.chooseIns };
+        if (!next.timeBed && !next.esiOrPatient) delete chooseIns[slotId];
+        else chooseIns[slotId] = next;
+        return { ...prev, chooseIns };
+      },
+      `Updated choose-in for ${label}`
+    );
   }
 
   function updateNedocs(hour: number, value: string) {
-    update((prev) => {
-      const nedocs = { ...prev.nedocs };
-      if (value.trim()) nedocs[hour] = value.trim();
-      else delete nedocs[hour];
-      return { ...prev, nedocs };
-    });
+    const trimmed = value.trim();
+    update(
+      (prev) => {
+        const nedocs = { ...prev.nedocs };
+        if (trimmed) nedocs[hour] = trimmed;
+        else delete nedocs[hour];
+        return { ...prev, nedocs };
+      },
+      trimmed
+        ? `Set NEDOCS at ${describeHour(hour)} to ${trimmed}`
+        : `Cleared NEDOCS at ${describeHour(hour)}`
+    );
   }
 
   return (
     <div className="min-h-screen bg-slate-100">
-      <header className="border-b border-slate-300 bg-white px-4 py-2">
-        <div className="flex items-center justify-between gap-4">
+      <header className="border-b border-slate-300 bg-white px-4 py-2 print:hidden">
+        <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <div className="text-base font-semibold">
               {site.name} <span className="font-normal text-slate-500">· {date}</span>
@@ -444,10 +623,48 @@ function DayBoard({
               </div>
             ) : null}
           </div>
-          <button onClick={onLeave} className="text-sm text-slate-600 underline">
-            Change site / date
-          </button>
+          <div className="flex flex-wrap items-center gap-2 text-sm">
+            <button
+              onClick={undo}
+              disabled={!canUndo}
+              className="rounded border border-slate-300 px-2 py-1 text-xs disabled:cursor-not-allowed disabled:opacity-40"
+              title="Undo (Ctrl/Cmd+Z)"
+            >
+              ↶ Undo
+            </button>
+            <button
+              onClick={redo}
+              disabled={!canRedo}
+              className="rounded border border-slate-300 px-2 py-1 text-xs disabled:cursor-not-allowed disabled:opacity-40"
+              title="Redo (Ctrl/Cmd+Shift+Z)"
+            >
+              ↷ Redo
+            </button>
+            <button
+              onClick={() => setShowLog((v) => !v)}
+              className="rounded border border-slate-300 px-2 py-1 text-xs"
+              title="View change log"
+              aria-expanded={showLog}
+            >
+              History ({auditLog.length})
+            </button>
+            <a
+              href={`?print=1${typeof window !== "undefined" ? window.location.hash : ""}`}
+              target="_blank"
+              rel="noreferrer"
+              className="rounded border border-slate-300 px-2 py-1 text-xs"
+              title="Open a print-friendly view in a new tab"
+            >
+              Print
+            </a>
+            <button onClick={onLeave} className="text-slate-600 underline">
+              Change site / date
+            </button>
+          </div>
         </div>
+        {showLog ? (
+          <AuditLogPanel log={auditLog} onClose={() => setShowLog(false)} />
+        ) : null}
       </header>
 
       <div className="grid gap-4 p-4 lg:grid-cols-[minmax(0,1fr)_360px]">
@@ -458,6 +675,7 @@ function DayBoard({
             slots={effectiveSlots}
             roster={state.roster}
             nedocs={state.nedocs}
+            version={dataVersion}
             onUpdateRow={updateRow}
             onDeleteRow={deleteRow}
             onMaterialize={materializeRow}
@@ -473,7 +691,7 @@ function DayBoard({
           <RosterPanel
             grouped={groupedRoster}
             roster={state.roster}
-            version={rosterVersion}
+            version={dataVersion}
             onUpdateProvider={updateRoster}
             onClearProvider={clearProvider}
             onAddExtraSlot={addExtraSlot}
@@ -483,6 +701,7 @@ function DayBoard({
             slots={effectiveSlots}
             roster={state.roster}
             chooseIns={state.chooseIns}
+            version={dataVersion}
             onUpdate={updateChooseIn}
           />
         </aside>
@@ -497,6 +716,7 @@ function RotationSheet({
   slots,
   roster,
   nedocs,
+  version,
   onUpdateRow,
   onDeleteRow,
   onMaterialize,
@@ -507,6 +727,7 @@ function RotationSheet({
   slots: ShiftSlot[];
   roster: Record<string, string>;
   nedocs: Record<number, string>;
+  version: number;
   onUpdateRow: (id: string, patch: Partial<Assignment>) => void;
   onDeleteRow: (id: string) => void;
   onMaterialize: (hourBlock: number, sortOrder: number, patch: RowDraft) => void;
@@ -543,6 +764,7 @@ function RotationSheet({
               slots={slots}
               roster={roster}
               nedocs={nedocs[hour] ?? ""}
+              version={version}
               onUpdateRow={onUpdateRow}
               onDeleteRow={onDeleteRow}
               onMaterialize={onMaterialize}
@@ -562,6 +784,7 @@ function HourBand({
   slots,
   roster,
   nedocs,
+  version,
   onUpdateRow,
   onDeleteRow,
   onMaterialize,
@@ -573,6 +796,7 @@ function HourBand({
   slots: ShiftSlot[];
   roster: Record<string, string>;
   nedocs: string;
+  version: number;
   onUpdateRow: (id: string, patch: Partial<Assignment>) => void;
   onDeleteRow: (id: string) => void;
   onMaterialize: (hourBlock: number, sortOrder: number, patch: RowDraft) => void;
@@ -637,6 +861,7 @@ function HourBand({
         isFirst={renderedIndex === 0}
         totalRows={totalRows}
         nedocs={nedocs}
+        version={version}
         onUpdate={(patch) => onUpdateRow(row.id, patch)}
         onDelete={() => onDeleteRow(row.id)}
         onUpdateNedocs={(v) => onUpdateNedocs(hour, v)}
@@ -664,6 +889,7 @@ function HourBand({
         isFirst={renderedIndex === 0}
         totalRows={totalRows}
         nedocs={nedocs}
+        version={version}
         predictedSlotId={predictedSlotId}
         onMaterialize={(patch) => onMaterialize(hour, sortOrder, patch)}
         onUpdateNedocs={(v) => onUpdateNedocs(hour, v)}
@@ -683,6 +909,7 @@ function SheetRow({
   isFirst,
   totalRows,
   nedocs,
+  version,
   predictedSlotId,
   onUpdate,
   onDelete,
@@ -696,6 +923,7 @@ function SheetRow({
   isFirst: boolean;
   totalRows: number;
   nedocs: string;
+  version: number;
   predictedSlotId?: string;
   onUpdate?: (patch: Partial<Assignment>) => void;
   onDelete?: () => void;
@@ -741,7 +969,7 @@ function SheetRow({
       ) : null}
       <td className="sheet-cell sheet-cell-mono">
         <input
-          key={row ? `t-${row.id}` : `tp-${hour}`}
+          key={`${row ? `t-${row.id}` : `tp-${hour}`}-v${version}`}
           defaultValue={row?.time ?? ""}
           onBlur={(e) => {
             const v = e.target.value;
@@ -755,7 +983,7 @@ function SheetRow({
         className={`sheet-cell sheet-cell-mono${bedIsSkip ? " sheet-cell-skip" : ""}`}
       >
         <input
-          key={row ? `b-${row.id}` : `bp-${hour}`}
+          key={`${row ? `b-${row.id}` : `bp-${hour}`}-v${version}`}
           defaultValue={row?.bed ?? ""}
           onBlur={(e) => {
             const v = e.target.value;
@@ -806,7 +1034,7 @@ function SheetRow({
       <td className="sheet-cell">
         <div className="flex items-center">
           <input
-            key={row ? `c-${row.id}` : `cp-${hour}`}
+            key={`${row ? `c-${row.id}` : `cp-${hour}`}-v${version}`}
             defaultValue={row?.comments ?? ""}
             onBlur={(e) => {
               const v = e.target.value;
@@ -830,7 +1058,7 @@ function SheetRow({
       {isFirst ? (
         <td rowSpan={totalRows} className="sheet-cell sheet-cell-mono sheet-nedocs">
           <input
-            key={`n-${hour}`}
+            key={`n-${hour}-v${version}`}
             defaultValue={nedocs}
             onBlur={(e) => {
               if (e.target.value === nedocs) return;
@@ -1238,11 +1466,13 @@ function ChooseInPanel({
   slots,
   roster,
   chooseIns,
+  version,
   onUpdate
 }: {
   slots: ShiftSlot[];
   roster: Record<string, string>;
   chooseIns: Record<string, ChooseIn>;
+  version: number;
   onUpdate: (slotId: string, patch: Partial<ChooseIn>) => void;
 }) {
   const filled = slots.filter((s) => roster[s.id]?.trim());
@@ -1279,7 +1509,7 @@ function ChooseInPanel({
                 </td>
                 <td className="sheet-cell">
                   <input
-                    key={`ct-${s.id}`}
+                    key={`ct-${s.id}-v${version}`}
                     defaultValue={c?.timeBed ?? ""}
                     onBlur={(e) => onUpdate(s.id, { timeBed: e.target.value })}
                     className="sheet-input sheet-input-mono"
@@ -1287,7 +1517,7 @@ function ChooseInPanel({
                 </td>
                 <td className="sheet-cell">
                   <input
-                    key={`ce-${s.id}`}
+                    key={`ce-${s.id}-v${version}`}
                     defaultValue={c?.esiOrPatient ?? ""}
                     onBlur={(e) => onUpdate(s.id, { esiOrPatient: e.target.value })}
                     className="sheet-input"
@@ -1298,6 +1528,209 @@ function ChooseInPanel({
           })}
         </tbody>
       </table>
+    </div>
+  );
+}
+
+function formatLogTime(ts: number): string {
+  const d = new Date(ts);
+  const hh = String(d.getHours()).padStart(2, "0");
+  const mm = String(d.getMinutes()).padStart(2, "0");
+  const ss = String(d.getSeconds()).padStart(2, "0");
+  return `${hh}:${mm}:${ss}`;
+}
+
+function AuditLogPanel({
+  log,
+  onClose
+}: {
+  log: AuditEntry[];
+  onClose: () => void;
+}) {
+  if (log.length === 0) {
+    return (
+      <div className="mt-2 rounded border border-slate-300 bg-slate-50 p-2 text-xs text-slate-500">
+        No changes recorded yet.
+        <button onClick={onClose} className="float-right text-slate-500 underline">
+          close
+        </button>
+      </div>
+    );
+  }
+  const reversed = [...log].reverse();
+  return (
+    <div className="mt-2 max-h-64 overflow-auto rounded border border-slate-300 bg-slate-50 text-xs">
+      <div className="sticky top-0 flex items-center justify-between border-b border-slate-300 bg-slate-100 px-3 py-1">
+        <span className="font-semibold text-slate-600">
+          Change history (newest first)
+        </span>
+        <button onClick={onClose} className="text-slate-500 underline">
+          close
+        </button>
+      </div>
+      <ul className="divide-y divide-slate-200">
+        {reversed.map((entry, i) => (
+          <li key={`${entry.timestamp}-${i}`} className="flex gap-3 px-3 py-1">
+            <span className="w-16 shrink-0 font-mono text-slate-500">
+              {formatLogTime(entry.timestamp)}
+            </span>
+            <span className="text-slate-800">{entry.description}</span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+function PrintBoard({ site, date }: { site: SiteDef; date: string }) {
+  const [state, setState] = useState<DayState>(() => emptyDay(site.code, date));
+
+  useEffect(() => {
+    setState(loadDay(site.code, date));
+  }, [site.code, date]);
+
+  useEffect(() => {
+    const t = window.setTimeout(() => window.print(), 250);
+    return () => window.clearTimeout(t);
+  }, []);
+
+  const effectiveSlots = useMemo<ShiftSlot[]>(
+    () => [...site.slots, ...state.extraSlots],
+    [site.slots, state.extraSlots]
+  );
+
+  const assignmentsByHour = useMemo(() => {
+    const m = new Map<number, Assignment[]>();
+    for (const a of state.assignments) {
+      if (!m.has(a.hourBlock)) m.set(a.hourBlock, []);
+      m.get(a.hourBlock)!.push(a);
+    }
+    for (const v of m.values()) v.sort((a, b) => a.sortOrder - b.sortOrder);
+    return m;
+  }, [state.assignments]);
+
+  const rosteredSlots = effectiveSlots.filter(
+    (s) => (state.roster[s.id]?.trim() ?? "") !== ""
+  );
+
+  return (
+    <div className="print-view">
+      <h1>
+        {site.name} <span className="print-meta">— {date}</span>
+      </h1>
+
+      <section>
+        <h2>Provider Schedule</h2>
+        {rosteredSlots.length === 0 ? (
+          <p className="print-empty">No providers rostered.</p>
+        ) : (
+          <table>
+            <thead>
+              <tr>
+                <th>Slot</th>
+                <th>Team</th>
+                <th>Provider</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rosteredSlots.map((s) => (
+                <tr key={s.id}>
+                  <td>{s.label}</td>
+                  <td>{s.team}</td>
+                  <td>{state.roster[s.id]}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </section>
+
+      <section>
+        <h2>Main ED Rotation</h2>
+        <table>
+          <thead>
+            <tr>
+              <th className="print-col-hour">Hour</th>
+              <th className="print-col-time">Time</th>
+              <th className="print-col-bed">Bed</th>
+              <th>Physician</th>
+              <th>Comments / ESI</th>
+              <th className="print-col-nedocs">NEDOCS</th>
+            </tr>
+          </thead>
+          <tbody>
+            {HOUR_BLOCKS.map((hour) => {
+              const rows = assignmentsByHour.get(hour) ?? [];
+              if (rows.length === 0) {
+                return (
+                  <tr key={hour}>
+                    <td className="print-hour">{hourLabel(hour)}</td>
+                    <td colSpan={4} className="print-empty">
+                      —
+                    </td>
+                    <td>{state.nedocs[hour] ?? ""}</td>
+                  </tr>
+                );
+              }
+              return rows.map((row, idx) => (
+                <tr key={row.id}>
+                  {idx === 0 ? (
+                    <td rowSpan={rows.length} className="print-hour">
+                      {hourLabel(hour)}
+                    </td>
+                  ) : null}
+                  <td>{row.time}</td>
+                  <td>{row.bed}</td>
+                  <td>
+                    {state.roster[row.shiftSlotId] ??
+                      effectiveSlots.find((s) => s.id === row.shiftSlotId)?.label ??
+                      ""}
+                  </td>
+                  <td>{row.comments}</td>
+                  {idx === 0 ? (
+                    <td rowSpan={rows.length} className="print-nedocs">
+                      {state.nedocs[hour] ?? ""}
+                    </td>
+                  ) : null}
+                </tr>
+              ));
+            })}
+          </tbody>
+        </table>
+      </section>
+
+      <section>
+        <h2>Choose-in</h2>
+        {rosteredSlots.length === 0 ? (
+          <p className="print-empty">No providers rostered.</p>
+        ) : (
+          <table>
+            <thead>
+              <tr>
+                <th>Provider</th>
+                <th>Time / Bed</th>
+                <th>ESI / Patient</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rosteredSlots.map((s) => {
+                const c = state.chooseIns[s.id];
+                return (
+                  <tr key={s.id}>
+                    <td>{state.roster[s.id]}</td>
+                    <td>{c?.timeBed ?? ""}</td>
+                    <td>{c?.esiOrPatient ?? ""}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        )}
+      </section>
+
+      <footer className="print-footer">
+        Generated {new Date().toLocaleString()} · single-browser snapshot
+      </footer>
     </div>
   );
 }
