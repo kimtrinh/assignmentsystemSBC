@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { HOUR_BLOCKS, hourLabel } from "@/lib/hours";
 import {
+  MAIN_ROTATION_TEAMS,
   SITES,
   TEAM_ORDER,
   getSite,
@@ -18,6 +19,7 @@ import {
   newId,
   saveDay
 } from "@/lib/storage";
+import { onShiftSlots, predictRotation } from "@/lib/rotation";
 
 const MIN_VISIBLE_ROWS_PER_HOUR = 4;
 
@@ -489,13 +491,26 @@ function HourBand({
   const placeholders = Array.from({ length: placeholderCount }, (_, i) => maxSort + 1 + i);
   const totalRows = rows.length + placeholders.length;
 
+  const onShift = onShiftSlots(slots, roster, hour).filter((s) =>
+    MAIN_ROTATION_TEAMS.includes(s.team)
+  );
+  const onShiftIds = new Set(onShift.map((s) => s.id));
+
+  function dropdownForRow(row: Assignment): ShiftSlot[] {
+    if (row.shiftSlotId && !onShiftIds.has(row.shiftSlotId)) {
+      const cur = slots.find((s) => s.id === row.shiftSlotId);
+      return cur ? [...onShift, cur] : onShift;
+    }
+    return onShift;
+  }
+
   return (
     <>
       {rows.map((row, idx) => (
         <SheetRow
           key={row.id}
           row={row}
-          slots={slots}
+          dropdownSlots={dropdownForRow(row)}
           roster={roster}
           hour={hour}
           isFirst={idx === 0}
@@ -508,16 +523,18 @@ function HourBand({
       ))}
       {placeholders.map((sortOrder, i) => {
         const idx = rows.length + i;
+        const predictedSlotId = predictRotation(onShift, rows, i);
         return (
           <SheetRow
             key={`p-${hour}-${sortOrder}`}
             row={null}
-            slots={slots}
+            dropdownSlots={onShift}
             roster={roster}
             hour={hour}
             isFirst={idx === 0}
             totalRows={totalRows}
             nedocs={nedocs}
+            predictedSlotId={predictedSlotId}
             onMaterialize={(patch) => onMaterialize(hour, sortOrder, patch)}
             onUpdateNedocs={(v) => onUpdateNedocs(hour, v)}
           />
@@ -529,32 +546,44 @@ function HourBand({
 
 function SheetRow({
   row,
-  slots,
+  dropdownSlots,
   roster,
   hour,
   isFirst,
   totalRows,
   nedocs,
+  predictedSlotId,
   onUpdate,
   onDelete,
   onMaterialize,
   onUpdateNedocs
 }: {
   row: Assignment | null;
-  slots: ShiftSlot[];
+  dropdownSlots: ShiftSlot[];
   roster: Record<string, string>;
   hour: number;
   isFirst: boolean;
   totalRows: number;
   nedocs: string;
+  predictedSlotId?: string;
   onUpdate?: (patch: Partial<Assignment>) => void;
   onDelete?: () => void;
   onMaterialize?: (patch: RowDraft) => void;
   onUpdateNedocs: (value: string) => void;
 }) {
+  const prediction = predictedSlotId ?? "";
+  const displayedSlotId = row ? row.shiftSlotId : prediction;
+
   function commit(patch: RowDraft) {
-    if (row) onUpdate?.(patch as Partial<Assignment>);
-    else onMaterialize?.(patch);
+    if (row) {
+      onUpdate?.(patch as Partial<Assignment>);
+      return;
+    }
+    const finalPatch: RowDraft =
+      patch.shiftSlotId === undefined && prediction
+        ? { ...patch, shiftSlotId: prediction }
+        : patch;
+    onMaterialize?.(finalPatch);
   }
 
   return (
@@ -590,12 +619,14 @@ function SheetRow({
       </td>
       <td className="sheet-cell">
         <select
-          value={row?.shiftSlotId ?? ""}
+          value={displayedSlotId}
           onChange={(e) => commit({ shiftSlotId: e.target.value })}
-          className="sheet-input sheet-select"
+          className={`sheet-input sheet-select${
+            !row && prediction ? " sheet-input-predicted" : ""
+          }`}
         >
           <option value="">—</option>
-          {slots.map((s) => (
+          {dropdownSlots.map((s) => (
             <option key={s.id} value={s.id}>
               {roster[s.id]?.trim() ? `${roster[s.id]} (${s.label})` : s.label}
             </option>

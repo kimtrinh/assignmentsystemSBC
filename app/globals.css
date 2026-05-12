@@ -127,6 +127,13 @@ textarea {
   box-shadow: inset 0 0 0 2px var(--sheet-focus);
 }
 
+/* Provider dropdown showing the predicted next-up rotation pick. */
+.sheet-input-predicted {
+  color: #475569;
+  font-style: italic;
+  background: #f3f6fb;
+}
+
 .sheet-input-mono {
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-variant-numeric: tabular-nums;
