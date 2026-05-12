@@ -1,7 +1,13 @@
 import type { Assignment } from "./storage";
 import type { ShiftSlot } from "./shiftTemplate";
 import { effectiveShift } from "./effectiveShift";
+import { HOUR_BLOCKS } from "./hours";
 import { isRotationActive, psgCapacityAt } from "./psg";
+
+function hourIndex(hour: number): number {
+  const i = HOUR_BLOCKS.indexOf(hour);
+  return i === -1 ? Number.MAX_SAFE_INTEGER : i;
+}
 
 export function coversHour(slot: ShiftSlot, hour: number): boolean {
   const start = parseInt(slot.startTime.split(":")[0], 10);
@@ -90,23 +96,30 @@ export function effectiveCapacity(
 
 // Round-robin pick driven by the per-hour PSG taper from the FMC PSG sheet,
 // using effective capacity (real provider times + rule adjustments).
+//
+// The rotation pointer carries across hour boundaries: once a provider is
+// picked, the cycle advances to them, and the next pick searches forward in
+// canonical (allSlots) order from that point. So if hour 05:00 ended with
+// Gomez as the last patient, hour 06:00's first non-bolus pick is whoever
+// comes after Gomez in the schedule, NOT a restart at the top of the list.
+//
+// Bolus is layered on top: while any provider in the pool is still in their
+// first-hour / catch-up bolus and has remaining capacity, the search skips
+// non-bolus providers. This lets two newly-started providers land their 3
+// patients each (interleaved) before the continuing providers get one,
+// while still respecting the cross-hour pointer for the post-bolus order.
+//
 // `steps` is the placeholder's position (0 = the very next one up).
 export function predictRotation(
   pool: ShiftSlot[],
+  allSlots: ShiftSlot[],
   allAssignments: Assignment[],
   hour: number,
   steps: number,
   roster: Record<string, string>
 ): string {
-  if (pool.length === 0) return "";
+  if (pool.length === 0 || allSlots.length === 0) return "";
 
-  // Per-provider capacity for this hour, and remaining capacity after the
-  // assignments already entered. Capacity > 2 means the provider is in a
-  // bolus hour: their first hour of shift (3) or the catch-up hour after
-  // a zero-patient first hour (3). Bolus providers keep priority over
-  // regular round-robin until they exhaust their bolus, so two providers
-  // starting the same hour land their 3 patients each interleaved before
-  // anyone else gets one.
   const caps = new Map<string, number>();
   const remaining = new Map<string, number>();
   for (const s of pool) {
@@ -120,29 +133,76 @@ export function predictRotation(
     remaining.set(a.shiftSlotId, remaining.get(a.shiftSlotId)! - 1);
   }
 
-  function priorityFor(id: string): [number, number] {
-    const cap = caps.get(id) ?? 0;
-    const rem = remaining.get(id) ?? 0;
-    const inBolus = cap > 2 && rem > 0 ? 1 : 0;
-    return [inBolus, rem];
+  const poolIds = new Set(pool.map((s) => s.id));
+  const slotIndex = new Map(allSlots.map((s, i) => [s.id, i]));
+
+  // Find the cycle pointer: index in `allSlots` of the last-picked provider
+  // across the entire day up to and including this hour. If none, start at
+  // -1 so the first search begins at allSlots[0].
+  const currentH = hourIndex(hour);
+  const sortedA = [...allAssignments].sort((a, b) => {
+    const ha = hourIndex(a.hourBlock);
+    const hb = hourIndex(b.hourBlock);
+    if (ha !== hb) return ha - hb;
+    return a.sortOrder - b.sortOrder;
+  });
+  let lastPicked: string | null = null;
+  for (const a of sortedA) {
+    if (hourIndex(a.hourBlock) > currentH) break;
+    if (!a.shiftSlotId) continue;
+    lastPicked = a.shiftSlotId;
+  }
+  let cyclePos = lastPicked != null ? slotIndex.get(lastPicked) ?? -1 : -1;
+
+  function eligible(id: string, anyBolus: boolean): boolean {
+    if (!poolIds.has(id)) return false;
+    if ((remaining.get(id) ?? 0) <= 0) return false;
+    if (anyBolus && (caps.get(id) ?? 0) <= 2) return false;
+    return true;
+  }
+
+  function anyBolusAvailable(): boolean {
+    for (const s of pool) {
+      if ((caps.get(s.id) ?? 0) > 2 && (remaining.get(s.id) ?? 0) > 0) {
+        return true;
+      }
+    }
+    return false;
   }
 
   let pickedId = "";
   for (let step = 0; step <= steps; step++) {
-    let bestIdx = 0;
-    let best = priorityFor(pool[0].id);
-    for (let i = 1; i < pool.length; i++) {
-      const p = priorityFor(pool[i].id);
-      // Compare lexicographically: bolus-active first, then remaining
-      // capacity (descending). Strict greater-than preserves canonical
-      // pool order on ties.
-      if (p[0] > best[0] || (p[0] === best[0] && p[1] > best[1])) {
-        best = p;
-        bestIdx = i;
+    const bolusMode = anyBolusAvailable();
+    let found: string | null = null;
+    for (let i = 1; i <= allSlots.length; i++) {
+      const idx = (cyclePos + i + allSlots.length) % allSlots.length;
+      const s = allSlots[idx];
+      if (eligible(s.id, bolusMode)) {
+        found = s.id;
+        cyclePos = idx;
+        break;
       }
     }
-    pickedId = pool[bestIdx].id;
-    remaining.set(pickedId, remaining.get(pickedId)! - 1);
+
+    if (!found) {
+      // Soft fallback: no one is "eligible" (everyone at 0 remaining). Pick
+      // the pool member with the highest remaining so the dropdown still
+      // shows a suggestion. Canonical first wins on ties.
+      let bestIdx = 0;
+      let bestRem = remaining.get(pool[0].id) ?? 0;
+      for (let i = 1; i < pool.length; i++) {
+        const r = remaining.get(pool[i].id) ?? 0;
+        if (r > bestRem) {
+          bestRem = r;
+          bestIdx = i;
+        }
+      }
+      found = pool[bestIdx].id;
+      cyclePos = slotIndex.get(found) ?? cyclePos;
+    }
+
+    pickedId = found;
+    remaining.set(pickedId, (remaining.get(pickedId) ?? 0) - 1);
   }
   return pickedId;
 }

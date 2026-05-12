@@ -933,6 +933,7 @@ function HourBand({
     emitCAPIfDue();
     const predictedSlotId = predictRotation(
       onShift,
+      slots,
       allAssignments,
       hour,
       i,
