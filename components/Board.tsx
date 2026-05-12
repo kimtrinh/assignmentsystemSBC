@@ -14,6 +14,7 @@ import {
   type Assignment,
   type ChooseIn,
   type DayState,
+  type ExtraSlot,
   emptyDay,
   loadDay,
   newId,
@@ -61,6 +62,29 @@ function slotStartHour(label: string): number | null {
 function rangeStartHour(range: string): number | null {
   const m = range.match(/^(\d{1,2}[ap])-/i);
   return m ? startHourFromAmpm(m[1]) : null;
+}
+
+function parseTimeRangeToShift(
+  range: string
+): { startTime: string; endTime: string; canonical: string } | null {
+  const m = range.trim().match(/^(\d{1,2})([ap])-(\d{1,2})([ap])$/i);
+  if (!m) return null;
+  const hh = (num: string, ampm: string): number => {
+    let h = parseInt(num, 10);
+    if (Number.isNaN(h)) return -1;
+    if (ampm.toLowerCase() === "p" && h !== 12) h += 12;
+    if (ampm.toLowerCase() === "a" && h === 12) h = 0;
+    return h;
+  };
+  const start = hh(m[1], m[2]);
+  const end = hh(m[3], m[4]);
+  if (start < 0 || end < 0) return null;
+  const fmt = (h: number) => `${String(h).padStart(2, "0")}:00`;
+  return {
+    startTime: fmt(start),
+    endTime: end === 0 ? "00:00" : fmt(end),
+    canonical: `${parseInt(m[1], 10)}${m[2].toLowerCase()}-${parseInt(m[3], 10)}${m[4].toLowerCase()}`
+  };
 }
 
 function autoMatchSchedule(
@@ -254,19 +278,29 @@ function DayBoard({
     });
   }
 
+  const effectiveSlots = useMemo<ShiftSlot[]>(
+    () => [...site.slots, ...state.extraSlots],
+    [site.slots, state.extraSlots]
+  );
+
   const groupedRoster = useMemo(() => {
-    const byTeam = new Map<string, ShiftSlot[]>();
-    for (const s of site.slots) {
-      if (!byTeam.has(s.team)) byTeam.set(s.team, []);
-      byTeam.get(s.team)!.push(s);
+    const byTeam = new Map<
+      string,
+      { templateSlots: ShiftSlot[]; extras: ExtraSlot[] }
+    >();
+    function getBucket(team: string) {
+      if (!byTeam.has(team)) byTeam.set(team, { templateSlots: [], extras: [] });
+      return byTeam.get(team)!;
     }
+    for (const s of site.slots) getBucket(s.team).templateSlots.push(s);
+    for (const e of state.extraSlots) getBucket(e.team).extras.push(e);
     const teams = Array.from(byTeam.keys()).sort((a, b) => {
       const ai = TEAM_ORDER.indexOf(a);
       const bi = TEAM_ORDER.indexOf(b);
       return (ai === -1 ? 99 : ai) - (bi === -1 ? 99 : bi);
     });
-    return teams.map((t) => ({ team: t, slots: byTeam.get(t)! }));
-  }, [site]);
+    return teams.map((t) => ({ team: t, ...byTeam.get(t)! }));
+  }, [site, state.extraSlots]);
 
   const assignmentsByHour = useMemo(() => {
     const m = new Map<number, Assignment[]>();
@@ -327,6 +361,49 @@ function DayBoard({
     setRosterVersion((v) => v + 1);
   }
 
+  function addExtraSlot(input: { name: string; timeRange: string; team: string }) {
+    const parsed = parseTimeRangeToShift(input.timeRange);
+    if (!parsed) return;
+    const name = input.name.trim();
+    if (!name) return;
+    const id = `extra-${newId()}`;
+    const slot: ExtraSlot = {
+      id,
+      label: parsed.canonical,
+      team: input.team,
+      startTime: parsed.startTime,
+      endTime: parsed.endTime
+    };
+    update((prev) => ({
+      ...prev,
+      extraSlots: [...prev.extraSlots, slot],
+      roster: { ...prev.roster, [id]: name }
+    }));
+    setRosterVersion((v) => v + 1);
+  }
+
+  function removeExtraSlot(slotId: string) {
+    update((prev) => {
+      const roster = { ...prev.roster };
+      delete roster[slotId];
+      return {
+        ...prev,
+        extraSlots: prev.extraSlots.filter((s) => s.id !== slotId),
+        roster
+      };
+    });
+    setRosterVersion((v) => v + 1);
+  }
+
+  function clearProvider(slotId: string) {
+    update((prev) => {
+      const roster = { ...prev.roster };
+      delete roster[slotId];
+      return { ...prev, roster };
+    });
+    setRosterVersion((v) => v + 1);
+  }
+
   function updateChooseIn(slotId: string, patch: Partial<ChooseIn>) {
     update((prev) => {
       const current = prev.chooseIns[slotId] ?? { timeBed: "", esiOrPatient: "" };
@@ -371,7 +448,7 @@ function DayBoard({
         <section className="min-w-0">
           <RotationSheet
             assignmentsByHour={assignmentsByHour}
-            slots={site.slots}
+            slots={effectiveSlots}
             roster={state.roster}
             nedocs={state.nedocs}
             onUpdateRow={updateRow}
@@ -383,17 +460,20 @@ function DayBoard({
 
         <aside className="space-y-4">
           <PasteSchedulePanel
-            slots={site.slots}
+            slots={effectiveSlots}
             onApply={applyRosterPaste}
           />
           <RosterPanel
             grouped={groupedRoster}
             roster={state.roster}
             version={rosterVersion}
-            onUpdate={updateRoster}
+            onUpdateProvider={updateRoster}
+            onClearProvider={clearProvider}
+            onAddExtraSlot={addExtraSlot}
+            onRemoveExtraSlot={removeExtraSlot}
           />
           <ChooseInPanel
-            slots={site.slots}
+            slots={effectiveSlots}
             roster={state.roster}
             chooseIns={state.chooseIns}
             onUpdate={updateChooseIn}
@@ -827,13 +907,24 @@ function RosterPanel({
   grouped,
   roster,
   version,
-  onUpdate
+  onUpdateProvider,
+  onClearProvider,
+  onAddExtraSlot,
+  onRemoveExtraSlot
 }: {
-  grouped: { team: string; slots: ShiftSlot[] }[];
+  grouped: {
+    team: string;
+    templateSlots: ShiftSlot[];
+    extras: ExtraSlot[];
+  }[];
   roster: Record<string, string>;
   version: number;
-  onUpdate: (slotId: string, providerName: string) => void;
+  onUpdateProvider: (slotId: string, providerName: string) => void;
+  onClearProvider: (slotId: string) => void;
+  onAddExtraSlot: (input: { name: string; timeRange: string; team: string }) => void;
+  onRemoveExtraSlot: (slotId: string) => void;
 }) {
+  const teams = grouped.map((g) => g.team);
   if (grouped.length === 0) {
     return (
       <div className="rounded-sm border border-slate-400 bg-white p-3 text-sm text-slate-500">
@@ -846,59 +937,210 @@ function RosterPanel({
       <div className="sheet-section-title">Provider Schedule</div>
       <table className="sheet w-full table-fixed border-collapse text-[13px]">
         <colgroup>
-          <col style={{ width: "55%" }} />
+          <col style={{ width: "52%" }} />
           <col />
+          <col style={{ width: "24px" }} />
         </colgroup>
         <tbody>
-          {grouped.map(({ team, slots }) => (
+          {grouped.map(({ team, templateSlots, extras }) => (
             <FragmentTeam
               key={team}
               team={team}
-              slots={slots}
+              templateSlots={templateSlots}
+              extras={extras}
               roster={roster}
               version={version}
-              onUpdate={onUpdate}
+              onUpdateProvider={onUpdateProvider}
+              onClearProvider={onClearProvider}
+              onRemoveExtraSlot={onRemoveExtraSlot}
             />
           ))}
         </tbody>
       </table>
+      <AddProviderForm teams={teams} onAdd={onAddExtraSlot} />
     </div>
   );
 }
 
 function FragmentTeam({
   team,
-  slots,
+  templateSlots,
+  extras,
   roster,
   version,
-  onUpdate
+  onUpdateProvider,
+  onClearProvider,
+  onRemoveExtraSlot
 }: {
   team: string;
-  slots: ShiftSlot[];
+  templateSlots: ShiftSlot[];
+  extras: ExtraSlot[];
   roster: Record<string, string>;
   version: number;
-  onUpdate: (slotId: string, providerName: string) => void;
+  onUpdateProvider: (slotId: string, providerName: string) => void;
+  onClearProvider: (slotId: string) => void;
+  onRemoveExtraSlot: (slotId: string) => void;
 }) {
   return (
     <>
       <tr className="sheet-subhead">
-        <td colSpan={2}>{team}</td>
+        <td colSpan={3}>{team}</td>
       </tr>
-      {slots.map((s) => (
-        <tr key={s.id} className="sheet-row">
-          <td className="sheet-cell sheet-cell-label">{s.label}</td>
+      {templateSlots.map((s) => {
+        const filled = (roster[s.id] ?? "").trim() !== "";
+        return (
+          <tr key={s.id} className="sheet-row">
+            <td className="sheet-cell sheet-cell-label">{s.label}</td>
+            <td className="sheet-cell">
+              <input
+                key={`r-${s.id}-v${version}`}
+                defaultValue={roster[s.id] ?? ""}
+                onBlur={(e) => onUpdateProvider(s.id, e.target.value)}
+                className="sheet-input"
+                placeholder="provider"
+              />
+            </td>
+            <td className="sheet-cell text-center">
+              {filled ? (
+                <button
+                  onClick={() => onClearProvider(s.id)}
+                  className="sheet-row-clear"
+                  aria-label="Clear provider (sick / off)"
+                  title="Clear provider (sick / off)"
+                >
+                  ×
+                </button>
+              ) : null}
+            </td>
+          </tr>
+        );
+      })}
+      {extras.map((e) => (
+        <tr key={e.id} className="sheet-row sheet-row-extra">
+          <td className="sheet-cell sheet-cell-label sheet-cell-extra">
+            <span className="sheet-extra-badge">+</span> {e.label}
+          </td>
           <td className="sheet-cell">
             <input
-              key={`r-${s.id}-v${version}`}
-              defaultValue={roster[s.id] ?? ""}
-              onBlur={(e) => onUpdate(s.id, e.target.value)}
+              key={`r-${e.id}-v${version}`}
+              defaultValue={roster[e.id] ?? ""}
+              onBlur={(ev) => onUpdateProvider(e.id, ev.target.value)}
               className="sheet-input"
               placeholder="provider"
             />
           </td>
+          <td className="sheet-cell text-center">
+            <button
+              onClick={() => onRemoveExtraSlot(e.id)}
+              className="sheet-row-clear"
+              aria-label="Remove this ad-hoc shift"
+              title="Remove this ad-hoc shift"
+            >
+              ×
+            </button>
+          </td>
         </tr>
       ))}
     </>
+  );
+}
+
+function AddProviderForm({
+  teams,
+  onAdd
+}: {
+  teams: string[];
+  onAdd: (input: { name: string; timeRange: string; team: string }) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [name, setName] = useState("");
+  const [timeRange, setTimeRange] = useState("");
+  const defaultTeam =
+    teams.find((t) => MAIN_ROTATION_TEAMS.includes(t)) ?? teams[0] ?? "Red";
+  const [team, setTeam] = useState(defaultTeam);
+  const [error, setError] = useState<string | null>(null);
+
+  function reset() {
+    setName("");
+    setTimeRange("");
+    setTeam(defaultTeam);
+    setError(null);
+  }
+
+  function submit() {
+    const parsed = parseTimeRangeToShift(timeRange);
+    if (!name.trim()) {
+      setError("Name is required.");
+      return;
+    }
+    if (!parsed) {
+      setError("Time range looks like 4a-2p, 7a-7p, 8p-8a.");
+      return;
+    }
+    onAdd({ name, timeRange, team });
+    reset();
+    setOpen(false);
+  }
+
+  if (!open) {
+    return (
+      <button
+        onClick={() => setOpen(true)}
+        className="block w-full border-t border-slate-300 bg-slate-50 px-3 py-1.5 text-left text-xs font-semibold uppercase tracking-wide text-slate-700 hover:bg-slate-100"
+      >
+        + Add provider (early / ad-hoc)
+      </button>
+    );
+  }
+  return (
+    <div className="space-y-2 border-t border-slate-300 bg-slate-50 p-2">
+      <div className="text-[11px] uppercase tracking-wide text-slate-600">
+        Add provider
+      </div>
+      <div className="grid grid-cols-[1fr_72px_72px] gap-1">
+        <input
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          placeholder="Provider name"
+          className="rounded border border-slate-300 px-2 py-1 text-[12px]"
+        />
+        <input
+          value={timeRange}
+          onChange={(e) => setTimeRange(e.target.value)}
+          placeholder="4a-2p"
+          className="rounded border border-slate-300 px-2 py-1 text-center font-mono text-[12px]"
+        />
+        <select
+          value={team}
+          onChange={(e) => setTeam(e.target.value)}
+          className="rounded border border-slate-300 bg-white px-1 py-1 text-[12px]"
+        >
+          {teams.map((t) => (
+            <option key={t} value={t}>
+              {t}
+            </option>
+          ))}
+        </select>
+      </div>
+      {error ? <div className="text-[11px] text-red-600">{error}</div> : null}
+      <div className="flex items-center justify-between">
+        <button
+          onClick={() => {
+            reset();
+            setOpen(false);
+          }}
+          className="text-[12px] text-slate-500 underline"
+        >
+          Cancel
+        </button>
+        <button
+          onClick={submit}
+          className="rounded bg-slate-900 px-3 py-1 text-[12px] text-white"
+        >
+          Add
+        </button>
+      </div>
+    </div>
   );
 }
 
