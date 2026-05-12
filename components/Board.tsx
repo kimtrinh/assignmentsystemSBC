@@ -38,8 +38,14 @@ import {
   onShiftSlots,
   predictRotation
 } from "@/lib/rotation";
-import { taperState, type TaperState } from "@/lib/psg";
+import {
+  PSG_CHOOSE_IN,
+  psgScheduleFor,
+  taperState,
+  type TaperState
+} from "@/lib/psg";
 import { effectiveShift } from "@/lib/effectiveShift";
+import { combineTimeBed, splitTimeBed } from "@/lib/chooseIn";
 
 const MIN_VISIBLE_ROWS_PER_HOUR = 4;
 
@@ -495,15 +501,54 @@ function DayBoard({
     return m;
   }, [state.assignments]);
 
+  // Returns the clock hour at which `slot` is at its choose-in (1*) hour,
+  // taking the provider's name-derived effective shift into account. Returns
+  // null if the slot doesn't have a 1* hour in its taper.
+  function chooseInHourFor(
+    slot: ShiftSlot,
+    name: string | undefined
+  ): number | null {
+    const eff = effectiveShift(slot, name);
+    const startH = parseInt(eff.startTime.split(":")[0], 10);
+    if (Number.isNaN(startH)) return null;
+    const schedule = psgScheduleFor(eff);
+    const offset = schedule.indexOf(PSG_CHOOSE_IN);
+    if (offset < 0) return null;
+    return (startH + offset) % 24;
+  }
+
+  // After a row in a 1* hour is written, mirror its values back into the
+  // Choose-in panel so the two surfaces stay in sync.
+  function syncRowToPanel(
+    prev: DayState,
+    row: Assignment
+  ): Record<string, ChooseIn> {
+    if (!row.shiftSlotId) return prev.chooseIns;
+    const slot = effectiveSlotsLookup.get(row.shiftSlotId);
+    if (!slot) return prev.chooseIns;
+    const targetHour = chooseInHourFor(slot, prev.roster[slot.id]);
+    if (targetHour === null || targetHour !== row.hourBlock) return prev.chooseIns;
+    const timeBed = combineTimeBed(row.time, row.bed);
+    const esiOrPatient = row.comments;
+    const chooseIns = { ...prev.chooseIns };
+    if (!timeBed && !esiOrPatient) delete chooseIns[slot.id];
+    else chooseIns[slot.id] = { timeBed, esiOrPatient };
+    return chooseIns;
+  }
+
   function updateRow(id: string, patch: Partial<Assignment>) {
     const fields = Object.keys(patch).join(", ");
     update(
-      (prev) => ({
-        ...prev,
-        assignments: prev.assignments.map((a) =>
+      (prev) => {
+        const assignments = prev.assignments.map((a) =>
           a.id === id ? { ...a, ...patch } : a
-        )
-      }),
+        );
+        const updated = assignments.find((a) => a.id === id);
+        const chooseIns = updated
+          ? syncRowToPanel(prev, updated)
+          : prev.chooseIns;
+        return { ...prev, assignments, chooseIns };
+      },
       `Edited row (${fields || "row"})`
     );
   }
@@ -531,7 +576,11 @@ function DayBoard({
       sortOrder
     };
     update(
-      (prev) => ({ ...prev, assignments: [...prev.assignments, row] }),
+      (prev) => ({
+        ...prev,
+        assignments: [...prev.assignments, row],
+        chooseIns: syncRowToPanel(prev, row)
+      }),
       `Added row at ${describeHour(hourBlock)}`
     );
   }
@@ -637,9 +686,31 @@ function DayBoard({
         const chooseIns = { ...prev.chooseIns };
         if (!next.timeBed && !next.esiOrPatient) delete chooseIns[slotId];
         else chooseIns[slotId] = next;
-        return { ...prev, chooseIns };
+
+        // If the slot has a materialized row at its 1* hour, sync the
+        // panel values into that row so the two surfaces stay aligned.
+        let assignments = prev.assignments;
+        if (slot) {
+          const targetHour = chooseInHourFor(slot, prev.roster[slot.id]);
+          if (targetHour !== null) {
+            const { time, bed } = splitTimeBed(next.timeBed);
+            assignments = prev.assignments.map((a) => {
+              if (a.shiftSlotId === slotId && a.hourBlock === targetHour) {
+                return {
+                  ...a,
+                  time,
+                  bed,
+                  comments: next.esiOrPatient
+                };
+              }
+              return a;
+            });
+          }
+        }
+        return { ...prev, chooseIns, assignments };
       },
-      `Updated choose-in for ${label}`
+      `Updated choose-in for ${label}`,
+      { bumpVersion: true }
     );
   }
 
@@ -733,6 +804,7 @@ function DayBoard({
             allAssignments={state.assignments}
             slots={effectiveSlots}
             roster={state.roster}
+            chooseIns={state.chooseIns}
             nedocs={state.nedocs}
             version={dataVersion}
             onUpdateRow={updateRow}
@@ -774,6 +846,7 @@ function RotationSheet({
   allAssignments,
   slots,
   roster,
+  chooseIns,
   nedocs,
   version,
   onUpdateRow,
@@ -785,6 +858,7 @@ function RotationSheet({
   allAssignments: Assignment[];
   slots: ShiftSlot[];
   roster: Record<string, string>;
+  chooseIns: Record<string, ChooseIn>;
   nedocs: Record<number, string>;
   version: number;
   onUpdateRow: (id: string, patch: Partial<Assignment>) => void;
@@ -822,6 +896,7 @@ function RotationSheet({
               allAssignments={allAssignments}
               slots={slots}
               roster={roster}
+              chooseIns={chooseIns}
               nedocs={nedocs[hour] ?? ""}
               version={version}
               onUpdateRow={onUpdateRow}
@@ -842,6 +917,7 @@ function HourBand({
   allAssignments,
   slots,
   roster,
+  chooseIns,
   nedocs,
   version,
   onUpdateRow,
@@ -854,6 +930,7 @@ function HourBand({
   allAssignments: Assignment[];
   slots: ShiftSlot[];
   roster: Record<string, string>;
+  chooseIns: Record<string, ChooseIn>;
   nedocs: string;
   version: number;
   onUpdateRow: (id: string, patch: Partial<Assignment>) => void;
@@ -916,6 +993,7 @@ function HourBand({
         row={row}
         dropdownSlots={dropdownForRow(row)}
         roster={roster}
+        chooseIns={chooseIns}
         hour={hour}
         isFirst={renderedIndex === 0}
         totalRows={totalRows}
@@ -945,6 +1023,7 @@ function HourBand({
         row={null}
         dropdownSlots={onShift}
         roster={roster}
+        chooseIns={chooseIns}
         hour={hour}
         isFirst={renderedIndex === 0}
         totalRows={totalRows}
@@ -965,6 +1044,7 @@ function SheetRow({
   row,
   dropdownSlots,
   roster,
+  chooseIns,
   hour,
   isFirst,
   totalRows,
@@ -979,6 +1059,7 @@ function SheetRow({
   row: Assignment | null;
   dropdownSlots: ShiftSlot[];
   roster: Record<string, string>;
+  chooseIns: Record<string, ChooseIn>;
   hour: number;
   isFirst: boolean;
   totalRows: number;
@@ -1008,15 +1089,58 @@ function SheetRow({
       : null;
   const bedIsSkip = (row?.bed ?? "").trim().toUpperCase() === "SKIP";
 
+  // When this placeholder is at the displayed provider's choose-in (1*)
+  // hour and that provider has a pre-filled Choose-in panel entry, pull
+  // the time/bed/comments into the row as default values. Materialize
+  // carries those defaults through too.
+  const panelDefault =
+    !row && chooseIn && displayedSlotId && chooseIns[displayedSlotId]
+      ? (() => {
+          const c = chooseIns[displayedSlotId];
+          const { time, bed } = splitTimeBed(c.timeBed);
+          return { time, bed, comments: c.esiOrPatient };
+        })()
+      : null;
+
+  // Carry-over: row's time hour is two or more blocks earlier than the
+  // current hour. Common for choose-in patients roomed hours earlier in
+  // the shift.
+  const carryOver = (() => {
+    const raw = row?.time ?? panelDefault?.time ?? "";
+    const t = parseInt(raw, 10);
+    if (Number.isNaN(t) || t < 0) return false;
+    const timeHour = Math.floor(t / 100);
+    if (timeHour < 0 || timeHour > 23) return false;
+    const HBlocks = HOUR_BLOCKS;
+    const ti = HBlocks.indexOf(timeHour);
+    const bi = HBlocks.indexOf(hour);
+    if (ti < 0 || bi < 0) return false;
+    return bi - ti >= 2;
+  })();
+
+  const timeIsValidFormat = (() => {
+    const raw = row?.time ?? "";
+    if (raw === "") return true;
+    return /^\d{1,4}$/.test(raw.trim());
+  })();
+
   function commit(patch: RowDraft) {
     if (row) {
       onUpdate?.(patch as Partial<Assignment>);
       return;
     }
-    const finalPatch: RowDraft =
-      patch.shiftSlotId === undefined && prediction
-        ? { ...patch, shiftSlotId: prediction }
-        : patch;
+    const finalPatch: RowDraft = { ...patch };
+    if (finalPatch.shiftSlotId === undefined && prediction) {
+      finalPatch.shiftSlotId = prediction;
+    }
+    if (panelDefault) {
+      if (finalPatch.time === undefined && panelDefault.time)
+        finalPatch.time = panelDefault.time;
+      if (finalPatch.bed === undefined && panelDefault.bed)
+        finalPatch.bed = panelDefault.bed;
+      if (finalPatch.comments === undefined && panelDefault.comments)
+        finalPatch.comments = panelDefault.comments;
+    }
     onMaterialize?.(finalPatch);
   }
 
@@ -1027,24 +1151,40 @@ function SheetRow({
           {hourLabel(hour)}
         </td>
       ) : null}
-      <td className="sheet-cell sheet-cell-mono">
-        <input
-          key={`${row ? `t-${row.id}` : `tp-${hour}`}-v${version}`}
-          defaultValue={row?.time ?? ""}
-          onBlur={(e) => {
-            const v = e.target.value;
-            if (v === (row?.time ?? "")) return;
-            commit({ time: v });
-          }}
-          className="sheet-input sheet-input-mono"
-        />
+      <td
+        className={`sheet-cell sheet-cell-mono${
+          !timeIsValidFormat ? " sheet-cell-invalid" : ""
+        }`}
+      >
+        <div className="flex items-center">
+          {carryOver ? (
+            <span
+              className="sheet-carry-badge"
+              title="Carry-over: patient roomed in an earlier hour"
+            >
+              ↩
+            </span>
+          ) : null}
+          <input
+            key={`${row ? `t-${row.id}` : `tp-${hour}`}-v${version}`}
+            defaultValue={row?.time ?? panelDefault?.time ?? ""}
+            placeholder="HHMM"
+            inputMode="numeric"
+            onBlur={(e) => {
+              const v = e.target.value;
+              if (v === (row?.time ?? "")) return;
+              commit({ time: v });
+            }}
+            className="sheet-input sheet-input-mono"
+          />
+        </div>
       </td>
       <td
         className={`sheet-cell sheet-cell-mono${bedIsSkip ? " sheet-cell-skip" : ""}`}
       >
         <input
           key={`${row ? `b-${row.id}` : `bp-${hour}`}-v${version}`}
-          defaultValue={row?.bed ?? ""}
+          defaultValue={row?.bed ?? panelDefault?.bed ?? ""}
           onBlur={(e) => {
             const v = e.target.value;
             if (v === (row?.bed ?? "")) return;
@@ -1095,7 +1235,7 @@ function SheetRow({
         <div className="flex items-center">
           <input
             key={`${row ? `c-${row.id}` : `cp-${hour}`}-v${version}`}
-            defaultValue={row?.comments ?? ""}
+            defaultValue={row?.comments ?? panelDefault?.comments ?? ""}
             onBlur={(e) => {
               const v = e.target.value;
               if (v === (row?.comments ?? "")) return;
