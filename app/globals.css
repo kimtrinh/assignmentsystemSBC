@@ -2,21 +2,49 @@
 @tailwind components;
 @tailwind utilities;
 
+/* --------------------------------------------------------------------------
+ * Color palette tuned to Google Sheets defaults so the app reads like the
+ * source FMC sheet at a glance.
+ *   border       #dadce0  — Sheets' gridline gray
+ *   border-strong #a5a5a5 — used for section bottoms and CAP separators
+ *   head-bg      #f3f3f3 — Sheets' header band
+ *   subhead-bg   #efefef — section subheader (overridden per team)
+ *   focus        #1a73e8 — Sheets' selected cell outline
+ *
+ * Team colors (light tint background + dark accent foreground) mirror the
+ * standard Google Sheets palette swatches: red, blue, green, purple, orange,
+ * gray for Red / Blue / PEDS / PITT / FLEX / DOD.
+ * ------------------------------------------------------------------------ */
+
 :root {
   color-scheme: light;
-  --sheet-border: #c7cdd6;
-  --sheet-border-strong: #8a93a3;
-  --sheet-head-bg: #eef2f7;
-  --sheet-subhead-bg: #f6f3e7;
+  --sheet-border: #dadce0;
+  --sheet-border-strong: #a5a5a5;
+  --sheet-head-bg: #f3f3f3;
+  --sheet-subhead-bg: #efefef;
   --sheet-row-alt: #fafbfc;
-  --sheet-focus: #1d6fe2;
+  --sheet-focus: #1a73e8;
+
+  --team-red-bg: #fce4e4;
+  --team-red-fg: #c00000;
+  --team-blue-bg: #c9daf8;
+  --team-blue-fg: #1c4587;
+  --team-peds-bg: #d9ead3;
+  --team-peds-fg: #38761d;
+  --team-pitt-bg: #d9d2e9;
+  --team-pitt-fg: #674ea7;
+  --team-flex-bg: #fce5cd;
+  --team-flex-fg: #b45f06;
+  --team-dod-bg: #e6e6e6;
+  --team-dod-fg: #555555;
 }
 
 html,
 body {
   height: 100%;
-  background: #e9edf2;
-  color: #0f172a;
+  background: #f8f9fa;
+  color: #202124;
+  font-family: Arial, "Helvetica Neue", Helvetica, sans-serif;
 }
 
 input,
@@ -29,6 +57,8 @@ textarea {
 
 .sheet {
   font-variant-numeric: tabular-nums;
+  font-family: Arial, "Helvetica Neue", Helvetica, sans-serif;
+  color: #202124;
 }
 
 .sheet th,
@@ -43,11 +73,11 @@ textarea {
 .sheet-head th,
 .sheet-head td {
   background: var(--sheet-head-bg);
-  font-weight: 600;
+  font-weight: 700;
   font-size: 11px;
   text-transform: uppercase;
   letter-spacing: 0.04em;
-  color: #475569;
+  color: #444746;
   padding: 4px 6px;
   text-align: left;
   border-bottom: 1px solid var(--sheet-border-strong);
@@ -58,24 +88,50 @@ textarea {
   border-bottom: 1px solid var(--sheet-border-strong);
   padding: 5px 8px;
   font-size: 12px;
-  font-weight: 600;
-  color: #334155;
+  font-weight: 700;
+  color: #444746;
   text-transform: uppercase;
   letter-spacing: 0.04em;
 }
 
+/* Team subhead rows in the Provider Schedule */
 .sheet-subhead td {
   background: var(--sheet-subhead-bg);
   font-size: 11px;
-  font-weight: 600;
+  font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.04em;
-  color: #6b4f0a;
+  color: #444746;
   padding: 3px 6px;
 }
 
+.sheet-subhead-Red td {
+  background: var(--team-red-bg);
+  color: var(--team-red-fg);
+}
+.sheet-subhead-Blue td {
+  background: var(--team-blue-bg);
+  color: var(--team-blue-fg);
+}
+.sheet-subhead-PEDS td {
+  background: var(--team-peds-bg);
+  color: var(--team-peds-fg);
+}
+.sheet-subhead-PITT td {
+  background: var(--team-pitt-bg);
+  color: var(--team-pitt-fg);
+}
+.sheet-subhead-FLEX td {
+  background: var(--team-flex-bg);
+  color: var(--team-flex-fg);
+}
+.sheet-subhead-DOD td {
+  background: var(--team-dod-bg);
+  color: var(--team-dod-fg);
+}
+
 .sheet-row td {
-  height: 26px;
+  height: 24px;
 }
 
 .sheet-cell {
@@ -85,28 +141,27 @@ textarea {
 
 .sheet-cell-mono {
   font-variant-numeric: tabular-nums;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-family: Arial, "Helvetica Neue", Helvetica, sans-serif;
 }
 
 .sheet-cell-label {
   padding: 2px 6px;
   font-size: 12px;
-  color: #475569;
+  color: #444746;
   background: #fafbfc;
 }
 
 .sheet-hour {
-  background: var(--sheet-head-bg);
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-weight: 600;
+  background: #fff8e1;
+  font-weight: 700;
   font-size: 13px;
   text-align: center;
-  color: #1e293b;
+  color: #202124;
   border-right: 1px solid var(--sheet-border-strong);
 }
 
 .sheet-nedocs {
-  background: #fcfaf2;
+  background: #fff8e1;
   text-align: center;
 }
 
@@ -114,36 +169,37 @@ textarea {
   display: block;
   width: 100%;
   height: 100%;
-  min-height: 24px;
+  min-height: 22px;
   padding: 2px 6px;
   border: 0;
   background: transparent;
   outline: none;
   color: inherit;
+  font-size: 13px;
 }
 
 .sheet-input:focus {
-  background: #fffdf0;
+  background: #ffffff;
   box-shadow: inset 0 0 0 2px var(--sheet-focus);
 }
 
 /* Provider dropdown showing the predicted next-up rotation pick. */
 .sheet-input-predicted {
-  color: #475569;
+  color: #5f6368;
   font-style: italic;
-  background: #f3f6fb;
+  background: #f1f3f4;
 }
 
 .sheet-input-mono {
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-variant-numeric: tabular-nums;
+  letter-spacing: 0;
 }
 
 .sheet-select {
   appearance: none;
   -webkit-appearance: none;
-  background-image: linear-gradient(45deg, transparent 50%, #94a3b8 50%),
-    linear-gradient(135deg, #94a3b8 50%, transparent 50%);
+  background-image: linear-gradient(45deg, transparent 50%, #5f6368 50%),
+    linear-gradient(135deg, #5f6368 50%, transparent 50%);
   background-position: calc(100% - 10px) 50%, calc(100% - 6px) 50%;
   background-size: 4px 4px, 4px 4px;
   background-repeat: no-repeat;
@@ -157,7 +213,7 @@ textarea {
   margin-right: 2px;
   border: 0;
   background: transparent;
-  color: #94a3b8;
+  color: #9aa0a6;
   font-size: 14px;
   line-height: 1;
   opacity: 0;
@@ -170,7 +226,7 @@ textarea {
 
 .sheet-row-delete:hover {
   color: #b91c1c;
-  background: #fee2e2;
+  background: #fce8e6;
 }
 
 .sheet-row-clear {
@@ -181,7 +237,7 @@ textarea {
   height: 20px;
   border: 0;
   background: transparent;
-  color: #94a3b8;
+  color: #9aa0a6;
   font-size: 14px;
   line-height: 1;
   cursor: pointer;
@@ -189,16 +245,16 @@ textarea {
 }
 
 .sheet-row:hover .sheet-row-clear {
-  color: #64748b;
+  color: #5f6368;
 }
 
 .sheet-row-clear:hover {
   color: #b91c1c;
-  background: #fee2e2;
+  background: #fce8e6;
 }
 
 .sheet-row-extra td {
-  background: #fdfbf3;
+  background: #fff8e1;
 }
 
 .sheet-cell-extra {
@@ -232,16 +288,16 @@ textarea {
   margin-right: 4px;
   padding: 1px 4px;
   font-size: 10px;
-  font-weight: 600;
+  font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.04em;
-  color: #475569;
-  background: #e2e8f0;
+  color: #5f6368;
+  background: #f1f3f4;
   border-radius: 2px;
 }
 
 .sheet-cap-row td {
-  background: #f1f5f9;
+  background: #f1f3f4;
   border-top: 2px solid var(--sheet-border-strong);
   border-bottom: 2px solid var(--sheet-border-strong);
 }
@@ -249,10 +305,10 @@ textarea {
 .sheet-cap-cell {
   text-align: center;
   font-size: 11px;
-  font-weight: 600;
+  font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.1em;
-  color: #64748b;
+  color: #5f6368;
   padding: 4px 8px;
 }
 
@@ -279,9 +335,42 @@ textarea {
   flex-shrink: 0;
   width: 16px;
   height: 22px;
-  color: #6b4f0a;
+  color: #b45309;
   font-size: 11px;
   cursor: help;
+}
+
+/* Provider name + team accent on the rotation dropdown — leaves a thin
+ * colored bar on the left of the Physician cell so the team is visible at
+ * a glance, same as the source sheet's color-coded Red / Blue lanes. */
+.sheet-team-stripe {
+  position: relative;
+}
+.sheet-team-stripe::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+}
+.sheet-team-stripe-Red::before {
+  background: var(--team-red-fg);
+}
+.sheet-team-stripe-Blue::before {
+  background: var(--team-blue-fg);
+}
+.sheet-team-stripe-PEDS::before {
+  background: var(--team-peds-fg);
+}
+.sheet-team-stripe-PITT::before {
+  background: var(--team-pitt-fg);
+}
+.sheet-team-stripe-FLEX::before {
+  background: var(--team-flex-fg);
+}
+.sheet-team-stripe-DOD::before {
+  background: var(--team-dod-fg);
 }
 
 /* --- Print view --------------------------------------------------------- */
@@ -290,14 +379,14 @@ textarea {
   background: #fff;
   color: #000;
   padding: 16px 20px;
-  font-family: ui-sans-serif, system-ui, -apple-system, sans-serif;
+  font-family: Arial, "Helvetica Neue", Helvetica, sans-serif;
   font-size: 11px;
   line-height: 1.3;
 }
 
 .print-view h1 {
   font-size: 18px;
-  font-weight: 600;
+  font-weight: 700;
   margin: 0 0 4px;
 }
 
@@ -312,7 +401,7 @@ textarea {
 
 .print-view h2 {
   font-size: 12px;
-  font-weight: 600;
+  font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.06em;
   margin: 0 0 4px;
@@ -335,8 +424,8 @@ textarea {
 }
 
 .print-view th {
-  background: #eee;
-  font-weight: 600;
+  background: #f3f3f3;
+  font-weight: 700;
   font-size: 9.5px;
   text-transform: uppercase;
   letter-spacing: 0.04em;
@@ -346,9 +435,8 @@ textarea {
 .print-view .print-hour {
   width: 48px;
   text-align: center;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-weight: 600;
-  background: #f5f5f5;
+  font-weight: 700;
+  background: #fff8e1;
 }
 
 .print-view .print-col-time { width: 56px; }
@@ -357,7 +445,6 @@ textarea {
 .print-view .print-nedocs {
   width: 56px;
   text-align: center;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 
 .print-view .print-empty {

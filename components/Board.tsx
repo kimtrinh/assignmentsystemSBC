@@ -1315,8 +1315,12 @@ function SheetRow({
           className="sheet-input sheet-input-mono"
         />
       </td>
-      <td className="sheet-cell">
-        <div className="flex items-center">
+      <td
+        className={`sheet-cell${
+          displayedSlot ? ` sheet-team-stripe sheet-team-stripe-${displayedSlot.team}` : ""
+        }`}
+      >
+        <div className="flex items-center" style={{ paddingLeft: displayedSlot ? 3 : 0 }}>
           {taperBadge ? (
             <span
               className="sheet-taper-badge"
@@ -1624,7 +1628,7 @@ function FragmentTeam({
 }) {
   return (
     <>
-      <tr className="sheet-subhead">
+      <tr className={`sheet-subhead sheet-subhead-${team}`}>
         <td colSpan={3}>{team}</td>
       </tr>
       {templateSlots.map((s) => {
