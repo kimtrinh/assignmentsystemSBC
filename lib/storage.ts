@@ -13,6 +13,17 @@ export type ChooseIn = {
   esiOrPatient: string;
 };
 
+// Same shape as ShiftSlot in shiftTemplate.ts, but stored on the day so
+// the clerk can add ad-hoc providers (early arrivals, extra coverage)
+// who aren't in the canonical template.
+export type ExtraSlot = {
+  id: string;
+  label: string;
+  team: string;
+  startTime: string;
+  endTime: string;
+};
+
 export type DayState = {
   siteCode: string;
   date: string;
@@ -23,6 +34,8 @@ export type DayState = {
   chooseIns: Record<string, ChooseIn>;
   // hourBlock -> NEDOCS reading at that hour
   nedocs: Record<number, string>;
+  // Ad-hoc shift slots created on this day (in addition to the template).
+  extraSlots: ExtraSlot[];
 };
 
 const KEY_PREFIX = "ed-board:v1:";
@@ -32,7 +45,15 @@ export function storageKey(siteCode: string, date: string): string {
 }
 
 export function emptyDay(siteCode: string, date: string): DayState {
-  return { siteCode, date, roster: {}, assignments: [], chooseIns: {}, nedocs: {} };
+  return {
+    siteCode,
+    date,
+    roster: {},
+    assignments: [],
+    chooseIns: {},
+    nedocs: {},
+    extraSlots: []
+  };
 }
 
 export function loadDay(siteCode: string, date: string): DayState {
@@ -47,7 +68,8 @@ export function loadDay(siteCode: string, date: string): DayState {
       roster: parsed.roster ?? {},
       assignments: parsed.assignments ?? [],
       chooseIns: parsed.chooseIns ?? {},
-      nedocs: parsed.nedocs ?? {}
+      nedocs: parsed.nedocs ?? {},
+      extraSlots: parsed.extraSlots ?? []
     };
   } catch {
     return emptyDay(siteCode, date);

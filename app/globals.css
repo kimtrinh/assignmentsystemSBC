@@ -172,3 +172,43 @@ textarea {
   color: #b91c1c;
   background: #fee2e2;
 }
+
+.sheet-row-clear {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 20px;
+  border: 0;
+  background: transparent;
+  color: #94a3b8;
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+  border-radius: 2px;
+}
+
+.sheet-row:hover .sheet-row-clear {
+  color: #64748b;
+}
+
+.sheet-row-clear:hover {
+  color: #b91c1c;
+  background: #fee2e2;
+}
+
+.sheet-row-extra td {
+  background: #fdfbf3;
+}
+
+.sheet-cell-extra {
+  color: #6b4f0a;
+}
+
+.sheet-extra-badge {
+  display: inline-block;
+  width: 14px;
+  text-align: center;
+  color: #b08a2e;
+  font-weight: 700;
+}
