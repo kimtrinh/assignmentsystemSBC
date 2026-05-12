@@ -185,20 +185,13 @@ export function predictRotation(
     }
 
     if (!found) {
-      // Soft fallback: no one is "eligible" (everyone at 0 remaining). Pick
-      // the pool member with the highest remaining so the dropdown still
-      // shows a suggestion. Canonical first wins on ties.
-      let bestIdx = 0;
-      let bestRem = remaining.get(pool[0].id) ?? 0;
-      for (let i = 1; i < pool.length; i++) {
-        const r = remaining.get(pool[i].id) ?? 0;
-        if (r > bestRem) {
-          bestRem = r;
-          bestIdx = i;
-        }
-      }
-      found = pool[bestIdx].id;
-      cyclePos = slotIndex.get(found) ?? cyclePos;
+      // Everyone in the rotation pool has hit (or exceeded) their PSG
+      // cap for this hour. Leave the prediction empty so the clerk has
+      // to consciously pick a provider for any over-cap entry (e.g. an
+      // L1/L2 high-acuity override). Returning "" parks the placeholder
+      // dropdown at "—" instead of phantom-suggesting an already-capped
+      // provider for a fourth (or fifth) patient.
+      return "";
     }
 
     pickedId = found;
