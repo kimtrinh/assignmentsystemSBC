@@ -100,16 +100,20 @@ NEXT_PUBLIC_SUPABASE_ANON_KEY=your-anon-key-here
 1. Create a new project at https://supabase.com (free tier is fine for
    prototyping with **de-identified / fake** patient data — see HIPAA note
    below before going live).
-2. Open the SQL editor and run `supabase/migrations/0001_init.sql` from
-   this repo. That creates the `days` table (one row per site+date holding
-   the JSONB DayState), the `audit_log` table, RLS policies, and enables
-   realtime broadcasts on `days`.
-3. **Authentication → URL Configuration**: add your deployed origin (e.g.
-   `https://ed-assign.vercel.app/`) plus `http://localhost:3000/` to the
-   **Redirect URLs** list so magic-link sign-in can come back to the right
-   place.
-4. **Authentication → Email Templates**: optional, customize the magic-link
-   message.
+2. Open the SQL editor and run, in order:
+   - `supabase/migrations/0001_init.sql` — creates the `days` table
+     (one row per site+date holding the JSONB DayState), the `audit_log`
+     table, RLS policies, and enables realtime broadcasts on `days`.
+   - `supabase/migrations/0002_audit_log_user_name.sql` — adds the
+     `user_name` column the History panel attributes entries to.
+3. **Authentication → Providers → Anonymous Sign-Ins**: enable. The app
+   silently signs every visitor in as an anonymous Supabase user so
+   realtime writes are authenticated without a login flow. There's no
+   sign-in screen, magic-link email, or password — visitors just type
+   their name in the header so audit entries can be attributed.
+4. **Authentication → URL Configuration**: add your deployed origin
+   (e.g. `https://ed-assign.vercel.app/`) plus `http://localhost:3000/`
+   to the **Site URL** / **Redirect URLs** list.
 
 ### Deploy to Vercel
 
@@ -123,8 +127,8 @@ NEXT_PUBLIC_SUPABASE_ANON_KEY=your-anon-key-here
 
 | Configured | What happens |
 | --- | --- |
-| Both env vars present | Magic-link sign-in screen → realtime board shared across every signed-in browser. localStorage still mirrors the data, so refreshes work offline. |
-| Either env var missing | No sign-in screen. Single-user localStorage mode, same as the GitHub Pages build. |
+| Both env vars present | No sign-in screen. Visitor is auto-signed-in as an anonymous Supabase user; the "You:" field in the header captures their name for the audit log. Realtime board shared across every browser. localStorage still mirrors the data so refreshes work offline. |
+| Either env var missing | No sign-in screen. Single-user localStorage mode, same as the GitHub Pages build. The "You:" field still labels audit entries locally. |
 
 ### HIPAA note
 
