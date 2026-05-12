@@ -19,6 +19,8 @@ import {
   saveDay
 } from "@/lib/storage";
 
+const MIN_VISIBLE_ROWS_PER_HOUR = 4;
+
 function todayInLA(): string {
   return new Intl.DateTimeFormat("en-CA", {
     timeZone: "America/Los_Angeles",
@@ -150,6 +152,8 @@ function Picker({ onOpen }: { onOpen: (site: string, date: string) => void }) {
   );
 }
 
+type RowDraft = Partial<Pick<Assignment, "time" | "bed" | "shiftSlotId" | "comments">>;
+
 function DayBoard({
   site,
   date,
@@ -197,24 +201,6 @@ function DayBoard({
     return m;
   }, [state.assignments]);
 
-  function addRow(hourBlock: number) {
-    update((prev) => {
-      const maxSort = prev.assignments
-        .filter((a) => a.hourBlock === hourBlock)
-        .reduce((acc, a) => Math.max(acc, a.sortOrder), -1);
-      const row: Assignment = {
-        id: newId(),
-        hourBlock,
-        time: "",
-        bed: "",
-        shiftSlotId: "",
-        comments: "",
-        sortOrder: maxSort + 1
-      };
-      return { ...prev, assignments: [...prev.assignments, row] };
-    });
-  }
-
   function updateRow(id: string, patch: Partial<Assignment>) {
     update((prev) => ({
       ...prev,
@@ -227,6 +213,19 @@ function DayBoard({
       ...prev,
       assignments: prev.assignments.filter((a) => a.id !== id)
     }));
+  }
+
+  function materializeRow(hourBlock: number, sortOrder: number, patch: RowDraft) {
+    const row: Assignment = {
+      id: newId(),
+      hourBlock,
+      time: patch.time ?? "",
+      bed: patch.bed ?? "",
+      shiftSlotId: patch.shiftSlotId ?? "",
+      comments: patch.comments ?? "",
+      sortOrder
+    };
+    update((prev) => ({ ...prev, assignments: [...prev.assignments, row] }));
   }
 
   function updateRoster(slotId: string, providerName: string) {
@@ -249,16 +248,28 @@ function DayBoard({
     });
   }
 
+  function updateNedocs(hour: number, value: string) {
+    update((prev) => {
+      const nedocs = { ...prev.nedocs };
+      if (value.trim()) nedocs[hour] = value.trim();
+      else delete nedocs[hour];
+      return { ...prev, nedocs };
+    });
+  }
+
   return (
-    <div className="min-h-screen">
-      <header className="border-b bg-white px-4 py-3">
+    <div className="min-h-screen bg-slate-100">
+      <header className="border-b border-slate-300 bg-white px-4 py-2">
         <div className="flex items-center justify-between gap-4">
           <div>
-            <div className="text-lg font-semibold">{site.name}</div>
-            <div className="text-xs text-slate-500">
-              {date}
-              {site.slots.length === 0 ? " · no shift template configured for this site yet" : ""}
+            <div className="text-base font-semibold">
+              {site.name} <span className="font-normal text-slate-500">· {date}</span>
             </div>
+            {site.slots.length === 0 ? (
+              <div className="text-xs text-slate-500">
+                No shift template configured for this site yet.
+              </div>
+            ) : null}
           </div>
           <button onClick={onLeave} className="text-sm text-slate-600 underline">
             Change site / date
@@ -266,27 +277,18 @@ function DayBoard({
         </div>
       </header>
 
-      <div className="grid gap-4 p-4 lg:grid-cols-[1fr_360px]">
-        <section>
-          <div className="mb-2 flex items-center justify-between">
-            <h2 className="text-lg font-semibold">Main ED Rotation</h2>
-            <span className="text-xs text-slate-500">Saved locally in this browser</span>
-          </div>
-
-          <div className="space-y-3">
-            {HOUR_BLOCKS.map((hour) => (
-              <HourBlockView
-                key={hour}
-                hour={hour}
-                rows={assignmentsByHour.get(hour) ?? []}
-                slots={site.slots}
-                roster={state.roster}
-                onAdd={() => addRow(hour)}
-                onUpdate={updateRow}
-                onDelete={deleteRow}
-              />
-            ))}
-          </div>
+      <div className="grid gap-4 p-4 lg:grid-cols-[minmax(0,1fr)_360px]">
+        <section className="min-w-0">
+          <RotationSheet
+            assignmentsByHour={assignmentsByHour}
+            slots={site.slots}
+            roster={state.roster}
+            nedocs={state.nedocs}
+            onUpdateRow={updateRow}
+            onDeleteRow={deleteRow}
+            onMaterialize={materializeRow}
+            onUpdateNedocs={updateNedocs}
+          />
         </section>
 
         <aside className="space-y-4">
@@ -307,100 +309,199 @@ function DayBoard({
   );
 }
 
-function HourBlockView({
+function RotationSheet({
+  assignmentsByHour,
+  slots,
+  roster,
+  nedocs,
+  onUpdateRow,
+  onDeleteRow,
+  onMaterialize,
+  onUpdateNedocs
+}: {
+  assignmentsByHour: Map<number, Assignment[]>;
+  slots: ShiftSlot[];
+  roster: Record<string, string>;
+  nedocs: Record<number, string>;
+  onUpdateRow: (id: string, patch: Partial<Assignment>) => void;
+  onDeleteRow: (id: string) => void;
+  onMaterialize: (hourBlock: number, sortOrder: number, patch: RowDraft) => void;
+  onUpdateNedocs: (hour: number, value: string) => void;
+}) {
+  return (
+    <div className="overflow-hidden rounded-sm border border-slate-400 bg-white shadow-sm">
+      <table className="sheet w-full table-fixed border-collapse text-[13px]">
+        <colgroup>
+          <col style={{ width: "64px" }} />
+          <col style={{ width: "64px" }} />
+          <col style={{ width: "72px" }} />
+          <col />
+          <col />
+          <col style={{ width: "72px" }} />
+        </colgroup>
+        <thead>
+          <tr className="sheet-head">
+            <th>Hour</th>
+            <th>Time</th>
+            <th>Bed</th>
+            <th>Physician</th>
+            <th>Comments / ESI</th>
+            <th>NEDOCS</th>
+          </tr>
+        </thead>
+        <tbody>
+          {HOUR_BLOCKS.map((hour) => (
+            <HourBand
+              key={hour}
+              hour={hour}
+              rows={assignmentsByHour.get(hour) ?? []}
+              slots={slots}
+              roster={roster}
+              nedocs={nedocs[hour] ?? ""}
+              onUpdateRow={onUpdateRow}
+              onDeleteRow={onDeleteRow}
+              onMaterialize={onMaterialize}
+              onUpdateNedocs={onUpdateNedocs}
+            />
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function HourBand({
   hour,
   rows,
   slots,
   roster,
-  onAdd,
-  onUpdate,
-  onDelete
+  nedocs,
+  onUpdateRow,
+  onDeleteRow,
+  onMaterialize,
+  onUpdateNedocs
 }: {
   hour: number;
   rows: Assignment[];
   slots: ShiftSlot[];
   roster: Record<string, string>;
-  onAdd: () => void;
-  onUpdate: (id: string, patch: Partial<Assignment>) => void;
-  onDelete: (id: string) => void;
+  nedocs: string;
+  onUpdateRow: (id: string, patch: Partial<Assignment>) => void;
+  onDeleteRow: (id: string) => void;
+  onMaterialize: (hourBlock: number, sortOrder: number, patch: RowDraft) => void;
+  onUpdateNedocs: (hour: number, value: string) => void;
 }) {
+  const maxSort = rows.reduce((acc, a) => Math.max(acc, a.sortOrder), -1);
+  const placeholderCount = Math.max(MIN_VISIBLE_ROWS_PER_HOUR - rows.length, 1);
+  const placeholders = Array.from({ length: placeholderCount }, (_, i) => maxSort + 1 + i);
+  const totalRows = rows.length + placeholders.length;
+
   return (
-    <div className="rounded border bg-white">
-      <div className="flex items-center justify-between border-b bg-slate-50 px-3 py-2">
-        <div className="font-mono text-sm font-semibold">{hourLabel(hour)}</div>
-        <button onClick={onAdd} className="rounded bg-slate-900 px-2 py-1 text-xs text-white">
-          + Add row
-        </button>
-      </div>
-      {rows.length === 0 ? (
-        <div className="px-3 py-2 text-xs text-slate-400">No patients yet.</div>
-      ) : (
-        <table className="w-full text-sm">
-          <thead className="text-left text-xs text-slate-500">
-            <tr>
-              <th className="w-20 px-3 py-1">Time</th>
-              <th className="w-20 px-3 py-1">Bed</th>
-              <th className="px-3 py-1">Physician</th>
-              <th className="px-3 py-1">Comments (ESI / skip reason)</th>
-              <th className="w-8 px-3 py-1" />
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((row) => (
-              <RowView
-                key={row.id}
-                row={row}
-                slots={slots}
-                roster={roster}
-                onUpdate={(patch) => onUpdate(row.id, patch)}
-                onDelete={() => onDelete(row.id)}
-              />
-            ))}
-          </tbody>
-        </table>
-      )}
-    </div>
+    <>
+      {rows.map((row, idx) => (
+        <SheetRow
+          key={row.id}
+          row={row}
+          slots={slots}
+          roster={roster}
+          hour={hour}
+          isFirst={idx === 0}
+          totalRows={totalRows}
+          nedocs={nedocs}
+          onUpdate={(patch) => onUpdateRow(row.id, patch)}
+          onDelete={() => onDeleteRow(row.id)}
+          onUpdateNedocs={(v) => onUpdateNedocs(hour, v)}
+        />
+      ))}
+      {placeholders.map((sortOrder, i) => {
+        const idx = rows.length + i;
+        return (
+          <SheetRow
+            key={`p-${hour}-${sortOrder}`}
+            row={null}
+            slots={slots}
+            roster={roster}
+            hour={hour}
+            isFirst={idx === 0}
+            totalRows={totalRows}
+            nedocs={nedocs}
+            onMaterialize={(patch) => onMaterialize(hour, sortOrder, patch)}
+            onUpdateNedocs={(v) => onUpdateNedocs(hour, v)}
+          />
+        );
+      })}
+    </>
   );
 }
 
-function RowView({
+function SheetRow({
   row,
   slots,
   roster,
+  hour,
+  isFirst,
+  totalRows,
+  nedocs,
   onUpdate,
-  onDelete
+  onDelete,
+  onMaterialize,
+  onUpdateNedocs
 }: {
-  row: Assignment;
+  row: Assignment | null;
   slots: ShiftSlot[];
   roster: Record<string, string>;
-  onUpdate: (patch: Partial<Assignment>) => void;
-  onDelete: () => void;
+  hour: number;
+  isFirst: boolean;
+  totalRows: number;
+  nedocs: string;
+  onUpdate?: (patch: Partial<Assignment>) => void;
+  onDelete?: () => void;
+  onMaterialize?: (patch: RowDraft) => void;
+  onUpdateNedocs: (value: string) => void;
 }) {
+  function commit(patch: RowDraft) {
+    if (row) onUpdate?.(patch as Partial<Assignment>);
+    else onMaterialize?.(patch);
+  }
+
   return (
-    <tr className="border-t align-top">
-      <td className="px-2 py-1">
+    <tr className="sheet-row">
+      {isFirst ? (
+        <td rowSpan={totalRows} className="sheet-hour">
+          {hourLabel(hour)}
+        </td>
+      ) : null}
+      <td className="sheet-cell sheet-cell-mono">
         <input
-          value={row.time}
-          onChange={(e) => onUpdate({ time: e.target.value })}
-          className="w-full rounded border px-2 py-1 text-sm"
-          placeholder="e.g. 642"
+          key={row ? `t-${row.id}` : `tp-${hour}`}
+          defaultValue={row?.time ?? ""}
+          onBlur={(e) => {
+            const v = e.target.value;
+            if (v === (row?.time ?? "")) return;
+            commit({ time: v });
+          }}
+          className="sheet-input sheet-input-mono"
         />
       </td>
-      <td className="px-2 py-1">
+      <td className="sheet-cell sheet-cell-mono">
         <input
-          value={row.bed}
-          onChange={(e) => onUpdate({ bed: e.target.value })}
-          className="w-full rounded border px-2 py-1 text-sm"
-          placeholder="e.g. AH2"
+          key={row ? `b-${row.id}` : `bp-${hour}`}
+          defaultValue={row?.bed ?? ""}
+          onBlur={(e) => {
+            const v = e.target.value;
+            if (v === (row?.bed ?? "")) return;
+            commit({ bed: v });
+          }}
+          className="sheet-input sheet-input-mono"
         />
       </td>
-      <td className="px-2 py-1">
+      <td className="sheet-cell">
         <select
-          value={row.shiftSlotId}
-          onChange={(e) => onUpdate({ shiftSlotId: e.target.value })}
-          className="w-full rounded border bg-white px-2 py-1 text-sm"
+          value={row?.shiftSlotId ?? ""}
+          onChange={(e) => commit({ shiftSlotId: e.target.value })}
+          className="sheet-input sheet-select"
         >
-          <option value="">— unassigned —</option>
+          <option value="">—</option>
           {slots.map((s) => (
             <option key={s.id} value={s.id}>
               {roster[s.id]?.trim() ? `${roster[s.id]} (${s.label})` : s.label}
@@ -408,24 +509,43 @@ function RowView({
           ))}
         </select>
       </td>
-      <td className="px-2 py-1">
-        <input
-          value={row.comments}
-          onChange={(e) => onUpdate({ comments: e.target.value })}
-          className="w-full rounded border px-2 py-1 text-sm"
-          placeholder="ESI level or skip reason"
-        />
+      <td className="sheet-cell">
+        <div className="flex items-center">
+          <input
+            key={row ? `c-${row.id}` : `cp-${hour}`}
+            defaultValue={row?.comments ?? ""}
+            onBlur={(e) => {
+              const v = e.target.value;
+              if (v === (row?.comments ?? "")) return;
+              commit({ comments: v });
+            }}
+            className="sheet-input"
+          />
+          {row ? (
+            <button
+              onClick={onDelete}
+              className="sheet-row-delete"
+              aria-label="Delete row"
+              title="Delete row"
+            >
+              ×
+            </button>
+          ) : null}
+        </div>
       </td>
-      <td className="px-2 py-1 text-right">
-        <button
-          onClick={onDelete}
-          className="rounded px-2 py-1 text-xs text-slate-500 hover:bg-red-50 hover:text-red-700"
-          aria-label="Delete row"
-          title="Delete row"
-        >
-          ×
-        </button>
-      </td>
+      {isFirst ? (
+        <td rowSpan={totalRows} className="sheet-cell sheet-cell-mono sheet-nedocs">
+          <input
+            key={`n-${hour}`}
+            defaultValue={nedocs}
+            onBlur={(e) => {
+              if (e.target.value === nedocs) return;
+              onUpdateNedocs(e.target.value);
+            }}
+            className="sheet-input sheet-input-mono"
+          />
+        </td>
+      ) : null}
     </tr>
   );
 }
@@ -441,39 +561,66 @@ function RosterPanel({
 }) {
   if (grouped.length === 0) {
     return (
-      <div className="rounded border bg-white p-3 text-sm text-slate-500">
+      <div className="rounded-sm border border-slate-400 bg-white p-3 text-sm text-slate-500">
         No shift template configured for this site yet.
       </div>
     );
   }
   return (
-    <div className="rounded border bg-white">
-      <div className="border-b bg-slate-50 px-3 py-2 text-sm font-semibold">
-        Today&apos;s Roster
-      </div>
-      <div className="divide-y">
-        {grouped.map(({ team, slots }) => (
-          <div key={team} className="px-3 py-2">
-            <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">
-              {team}
-            </div>
-            <ul className="space-y-1">
-              {slots.map((s) => (
-                <li key={s.id} className="flex items-center gap-2 text-sm">
-                  <span className="w-32 shrink-0 text-xs text-slate-600">{s.label}</span>
-                  <input
-                    defaultValue={roster[s.id] ?? ""}
-                    onBlur={(e) => onUpdate(s.id, e.target.value)}
-                    placeholder="provider"
-                    className="w-full rounded border px-2 py-1 text-sm"
-                  />
-                </li>
-              ))}
-            </ul>
-          </div>
-        ))}
-      </div>
+    <div className="overflow-hidden rounded-sm border border-slate-400 bg-white">
+      <div className="sheet-section-title">Provider Schedule</div>
+      <table className="sheet w-full table-fixed border-collapse text-[13px]">
+        <colgroup>
+          <col style={{ width: "55%" }} />
+          <col />
+        </colgroup>
+        <tbody>
+          {grouped.map(({ team, slots }) => (
+            <FragmentTeam
+              key={team}
+              team={team}
+              slots={slots}
+              roster={roster}
+              onUpdate={onUpdate}
+            />
+          ))}
+        </tbody>
+      </table>
     </div>
+  );
+}
+
+function FragmentTeam({
+  team,
+  slots,
+  roster,
+  onUpdate
+}: {
+  team: string;
+  slots: ShiftSlot[];
+  roster: Record<string, string>;
+  onUpdate: (slotId: string, providerName: string) => void;
+}) {
+  return (
+    <>
+      <tr className="sheet-subhead">
+        <td colSpan={2}>{team}</td>
+      </tr>
+      {slots.map((s) => (
+        <tr key={s.id} className="sheet-row">
+          <td className="sheet-cell sheet-cell-label">{s.label}</td>
+          <td className="sheet-cell">
+            <input
+              key={`r-${s.id}`}
+              defaultValue={roster[s.id] ?? ""}
+              onBlur={(e) => onUpdate(s.id, e.target.value)}
+              className="sheet-input"
+              placeholder="provider"
+            />
+          </td>
+        </tr>
+      ))}
+    </>
   );
 }
 
@@ -491,40 +638,56 @@ function ChooseInPanel({
   const filled = slots.filter((s) => roster[s.id]?.trim());
   if (filled.length === 0) {
     return (
-      <div className="rounded border bg-white p-3 text-sm text-slate-500">
-        Choose-in opens once a provider is named in the roster.
+      <div className="rounded-sm border border-slate-400 bg-white p-3 text-sm text-slate-500">
+        Choose-in opens once a provider is named in the schedule.
       </div>
     );
   }
   return (
-    <div className="rounded border bg-white">
-      <div className="border-b bg-slate-50 px-3 py-2 text-sm font-semibold">Choose-in</div>
-      <ul className="divide-y">
-        {filled.map((s) => {
-          const c = chooseIns[s.id];
-          return (
-            <li key={s.id} className="px-3 py-2">
-              <div className="mb-1 text-xs text-slate-600">
-                {roster[s.id]} <span className="text-slate-400">· {s.label}</span>
-              </div>
-              <div className="flex gap-2">
-                <input
-                  defaultValue={c?.timeBed ?? ""}
-                  onBlur={(e) => onUpdate(s.id, { timeBed: e.target.value })}
-                  placeholder="time / bed"
-                  className="w-1/2 rounded border px-2 py-1 text-sm"
-                />
-                <input
-                  defaultValue={c?.esiOrPatient ?? ""}
-                  onBlur={(e) => onUpdate(s.id, { esiOrPatient: e.target.value })}
-                  placeholder="ESI / patient"
-                  className="w-1/2 rounded border px-2 py-1 text-sm"
-                />
-              </div>
-            </li>
-          );
-        })}
-      </ul>
+    <div className="overflow-hidden rounded-sm border border-slate-400 bg-white">
+      <div className="sheet-section-title">Choose-in Patient</div>
+      <table className="sheet w-full table-fixed border-collapse text-[13px]">
+        <colgroup>
+          <col style={{ width: "40%" }} />
+          <col style={{ width: "30%" }} />
+          <col />
+        </colgroup>
+        <thead>
+          <tr className="sheet-head">
+            <th>Provider</th>
+            <th>Time / Bed</th>
+            <th>ESI / Patient</th>
+          </tr>
+        </thead>
+        <tbody>
+          {filled.map((s) => {
+            const c = chooseIns[s.id];
+            return (
+              <tr key={s.id} className="sheet-row">
+                <td className="sheet-cell sheet-cell-label" title={s.label}>
+                  {roster[s.id]}
+                </td>
+                <td className="sheet-cell">
+                  <input
+                    key={`ct-${s.id}`}
+                    defaultValue={c?.timeBed ?? ""}
+                    onBlur={(e) => onUpdate(s.id, { timeBed: e.target.value })}
+                    className="sheet-input sheet-input-mono"
+                  />
+                </td>
+                <td className="sheet-cell">
+                  <input
+                    key={`ce-${s.id}`}
+                    defaultValue={c?.esiOrPatient ?? ""}
+                    onBlur={(e) => onUpdate(s.id, { esiOrPatient: e.target.value })}
+                    className="sheet-input"
+                  />
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
     </div>
   );
 }
