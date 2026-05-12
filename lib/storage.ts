@@ -38,10 +38,43 @@ export type DayState = {
   extraSlots: ExtraSlot[];
 };
 
+export type AuditEntry = {
+  timestamp: number;
+  description: string;
+};
+
 const KEY_PREFIX = "ed-board:v1:";
+const LOG_PREFIX = "ed-board-log:v1:";
+
+export const MAX_LOG_ENTRIES = 500;
 
 export function storageKey(siteCode: string, date: string): string {
   return `${KEY_PREFIX}${siteCode}:${date}`;
+}
+
+export function auditLogKey(siteCode: string, date: string): string {
+  return `${LOG_PREFIX}${siteCode}:${date}`;
+}
+
+export function loadAuditLog(siteCode: string, date: string): AuditEntry[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const raw = window.localStorage.getItem(auditLogKey(siteCode, date));
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? (parsed as AuditEntry[]) : [];
+  } catch {
+    return [];
+  }
+}
+
+export function saveAuditLog(
+  siteCode: string,
+  date: string,
+  log: AuditEntry[]
+): void {
+  if (typeof window === "undefined") return;
+  window.localStorage.setItem(auditLogKey(siteCode, date), JSON.stringify(log));
 }
 
 export function emptyDay(siteCode: string, date: string): DayState {
