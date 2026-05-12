@@ -65,3 +65,35 @@ export function isRotationActive(slot: ShiftSlot, hour: number): boolean {
   const t = psgTargetAt(slot, hour);
   return t !== null && t !== 0;
 }
+
+export type TaperState =
+  | "offShift"
+  | "first"
+  | "regular"
+  | "nxlast"
+  | "last"
+  | "chooseIn"
+  | "wrapUp";
+
+// Where the provider is in their per-hour PSG taper. Used to surface the
+// last--, nxlast--, choose-in (1*), and wrap-up (X) markers from the source
+// sheet onto the rotation grid.
+export function taperState(slot: ShiftSlot, hour: number): TaperState {
+  const target = psgTargetAt(slot, hour);
+  if (target === null) return "offShift";
+  if (target === 0) return "wrapUp";
+  if (target === PSG_CHOOSE_IN) return "chooseIn";
+
+  const startH = parseInt(slot.startTime.split(":")[0], 10);
+  if (Number.isNaN(startH)) return "regular";
+  const offset = (hour - startH + 24) % 24;
+  if (offset === 0) return "first";
+
+  const schedule = psgScheduleFor(slot);
+  const chooseInIdx = schedule.indexOf(PSG_CHOOSE_IN);
+  if (chooseInIdx >= 0) {
+    if (offset === chooseInIdx - 1) return "last";
+    if (offset === chooseInIdx - 2 && schedule[offset] === 1) return "nxlast";
+  }
+  return "regular";
+}
