@@ -225,3 +225,40 @@ textarea {
   color: #b45309;
   cursor: help;
 }
+
+.sheet-taper-badge {
+  display: inline-block;
+  flex-shrink: 0;
+  margin-right: 4px;
+  padding: 1px 4px;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #475569;
+  background: #e2e8f0;
+  border-radius: 2px;
+}
+
+.sheet-cap-row td {
+  background: #f1f5f9;
+  border-top: 2px solid var(--sheet-border-strong);
+  border-bottom: 2px solid var(--sheet-border-strong);
+}
+
+.sheet-cap-cell {
+  text-align: center;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: #64748b;
+  padding: 4px 8px;
+}
+
+.sheet-cell-skip input {
+  text-transform: uppercase;
+  color: #b45309;
+  background: #fef9c3;
+  font-style: italic;
+}

@@ -20,8 +20,13 @@ import {
   newId,
   saveDay
 } from "@/lib/storage";
-import { onShiftSlots, predictRotation } from "@/lib/rotation";
-import { isChooseInHour } from "@/lib/psg";
+import {
+  effectiveCapacity,
+  onShiftSlots,
+  predictRotation
+} from "@/lib/rotation";
+import { taperState, type TaperState } from "@/lib/psg";
+import { effectiveShift } from "@/lib/effectiveShift";
 
 const MIN_VISIBLE_ROWS_PER_HOUR = 4;
 
@@ -449,6 +454,7 @@ function DayBoard({
         <section className="min-w-0">
           <RotationSheet
             assignmentsByHour={assignmentsByHour}
+            allAssignments={state.assignments}
             slots={effectiveSlots}
             roster={state.roster}
             nedocs={state.nedocs}
@@ -487,6 +493,7 @@ function DayBoard({
 
 function RotationSheet({
   assignmentsByHour,
+  allAssignments,
   slots,
   roster,
   nedocs,
@@ -496,6 +503,7 @@ function RotationSheet({
   onUpdateNedocs
 }: {
   assignmentsByHour: Map<number, Assignment[]>;
+  allAssignments: Assignment[];
   slots: ShiftSlot[];
   roster: Record<string, string>;
   nedocs: Record<number, string>;
@@ -531,6 +539,7 @@ function RotationSheet({
               key={hour}
               hour={hour}
               rows={assignmentsByHour.get(hour) ?? []}
+              allAssignments={allAssignments}
               slots={slots}
               roster={roster}
               nedocs={nedocs[hour] ?? ""}
@@ -549,6 +558,7 @@ function RotationSheet({
 function HourBand({
   hour,
   rows,
+  allAssignments,
   slots,
   roster,
   nedocs,
@@ -559,6 +569,7 @@ function HourBand({
 }: {
   hour: number;
   rows: Assignment[];
+  allAssignments: Assignment[];
   slots: ShiftSlot[];
   roster: Record<string, string>;
   nedocs: string;
@@ -568,14 +579,27 @@ function HourBand({
   onUpdateNedocs: (hour: number, value: string) => void;
 }) {
   const maxSort = rows.reduce((acc, a) => Math.max(acc, a.sortOrder), -1);
-  const placeholderCount = Math.max(MIN_VISIBLE_ROWS_PER_HOUR - rows.length, 1);
-  const placeholders = Array.from({ length: placeholderCount }, (_, i) => maxSort + 1 + i);
-  const totalRows = rows.length + placeholders.length;
 
   const onShift = onShiftSlots(slots, roster, hour).filter((s) =>
     MAIN_ROTATION_TEAMS.includes(s.team)
   );
   const onShiftIds = new Set(onShift.map((s) => s.id));
+
+  const totalCap = onShift.reduce(
+    (sum, s) => sum + effectiveCapacity(s, hour, roster, allAssignments),
+    0
+  );
+
+  const targetVisible = Math.max(
+    MIN_VISIBLE_ROWS_PER_HOUR,
+    totalCap > 0 ? totalCap + 1 : MIN_VISIBLE_ROWS_PER_HOUR
+  );
+  const placeholderCount = Math.max(targetVisible - rows.length, 1);
+  const placeholders = Array.from({ length: placeholderCount }, (_, i) => maxSort + 1 + i);
+
+  const visibleSheetRows = rows.length + placeholders.length;
+  const showCAP = totalCap > 0 && totalCap < visibleSheetRows;
+  const totalRows = visibleSheetRows + (showCAP ? 1 : 0);
 
   function dropdownForRow(row: Assignment): ShiftSlot[] {
     if (row.shiftSlotId && !onShiftIds.has(row.shiftSlotId)) {
@@ -585,44 +609,70 @@ function HourBand({
     return onShift;
   }
 
-  return (
-    <>
-      {rows.map((row, idx) => (
-        <SheetRow
-          key={row.id}
-          row={row}
-          dropdownSlots={dropdownForRow(row)}
-          roster={roster}
-          hour={hour}
-          isFirst={idx === 0}
-          totalRows={totalRows}
-          nedocs={nedocs}
-          onUpdate={(patch) => onUpdateRow(row.id, patch)}
-          onDelete={() => onDeleteRow(row.id)}
-          onUpdateNedocs={(v) => onUpdateNedocs(hour, v)}
-        />
-      ))}
-      {placeholders.map((sortOrder, i) => {
-        const idx = rows.length + i;
-        const predictedSlotId = predictRotation(onShift, rows, hour, i);
-        return (
-          <SheetRow
-            key={`p-${hour}-${sortOrder}`}
-            row={null}
-            dropdownSlots={onShift}
-            roster={roster}
-            hour={hour}
-            isFirst={idx === 0}
-            totalRows={totalRows}
-            nedocs={nedocs}
-            predictedSlotId={predictedSlotId}
-            onMaterialize={(patch) => onMaterialize(hour, sortOrder, patch)}
-            onUpdateNedocs={(v) => onUpdateNedocs(hour, v)}
-          />
-        );
-      })}
-    </>
-  );
+  const elements: React.ReactElement[] = [];
+  let renderedIndex = 0;
+
+  function emitCAPIfDue() {
+    if (showCAP && renderedIndex === totalCap) {
+      elements.push(
+        <tr key={`cap-${hour}`} className="sheet-cap-row">
+          <td colSpan={4} className="sheet-cap-cell">
+            — CAP — rotation full for this hour
+          </td>
+        </tr>
+      );
+      renderedIndex++;
+    }
+  }
+
+  rows.forEach((row) => {
+    emitCAPIfDue();
+    elements.push(
+      <SheetRow
+        key={row.id}
+        row={row}
+        dropdownSlots={dropdownForRow(row)}
+        roster={roster}
+        hour={hour}
+        isFirst={renderedIndex === 0}
+        totalRows={totalRows}
+        nedocs={nedocs}
+        onUpdate={(patch) => onUpdateRow(row.id, patch)}
+        onDelete={() => onDeleteRow(row.id)}
+        onUpdateNedocs={(v) => onUpdateNedocs(hour, v)}
+      />
+    );
+    renderedIndex++;
+  });
+
+  placeholders.forEach((sortOrder, i) => {
+    emitCAPIfDue();
+    const predictedSlotId = predictRotation(
+      onShift,
+      allAssignments,
+      hour,
+      i,
+      roster
+    );
+    elements.push(
+      <SheetRow
+        key={`p-${hour}-${sortOrder}`}
+        row={null}
+        dropdownSlots={onShift}
+        roster={roster}
+        hour={hour}
+        isFirst={renderedIndex === 0}
+        totalRows={totalRows}
+        nedocs={nedocs}
+        predictedSlotId={predictedSlotId}
+        onMaterialize={(patch) => onMaterialize(hour, sortOrder, patch)}
+        onUpdateNedocs={(v) => onUpdateNedocs(hour, v)}
+      />
+    );
+    renderedIndex++;
+  });
+
+  return <>{elements}</>;
 }
 
 function SheetRow({
@@ -657,7 +707,18 @@ function SheetRow({
   const displayedSlot = displayedSlotId
     ? dropdownSlots.find((s) => s.id === displayedSlotId)
     : undefined;
-  const chooseIn = displayedSlot ? isChooseInHour(displayedSlot, hour) : false;
+  const effSlot = displayedSlot
+    ? effectiveShift(displayedSlot, roster[displayedSlot.id])
+    : undefined;
+  const taper: TaperState = effSlot ? taperState(effSlot, hour) : "offShift";
+  const chooseIn = taper === "chooseIn";
+  const taperBadge =
+    taper === "last"
+      ? "last"
+      : taper === "nxlast"
+      ? "nxlast"
+      : null;
+  const bedIsSkip = (row?.bed ?? "").trim().toUpperCase() === "SKIP";
 
   function commit(patch: RowDraft) {
     if (row) {
@@ -690,7 +751,9 @@ function SheetRow({
           className="sheet-input sheet-input-mono"
         />
       </td>
-      <td className="sheet-cell sheet-cell-mono">
+      <td
+        className={`sheet-cell sheet-cell-mono${bedIsSkip ? " sheet-cell-skip" : ""}`}
+      >
         <input
           key={row ? `b-${row.id}` : `bp-${hour}`}
           defaultValue={row?.bed ?? ""}
@@ -704,6 +767,18 @@ function SheetRow({
       </td>
       <td className="sheet-cell">
         <div className="flex items-center">
+          {taperBadge ? (
+            <span
+              className="sheet-taper-badge"
+              title={
+                taperBadge === "last"
+                  ? "Last main patient before choose-in"
+                  : "Next-to-last main patient"
+              }
+            >
+              {taperBadge}
+            </span>
+          ) : null}
           <select
             value={displayedSlotId}
             onChange={(e) => commit({ shiftSlotId: e.target.value })}
