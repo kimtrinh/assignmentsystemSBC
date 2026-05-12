@@ -4,12 +4,18 @@
 
 :root {
   color-scheme: light;
+  --sheet-border: #c7cdd6;
+  --sheet-border-strong: #8a93a3;
+  --sheet-head-bg: #eef2f7;
+  --sheet-subhead-bg: #f6f3e7;
+  --sheet-row-alt: #fafbfc;
+  --sheet-focus: #1d6fe2;
 }
 
 html,
 body {
   height: 100%;
-  background: #f8fafc;
+  background: #e9edf2;
   color: #0f172a;
 }
 
@@ -17,4 +23,145 @@ input,
 select,
 textarea {
   font: inherit;
+}
+
+/* --- Spreadsheet-style grid --------------------------------------------- */
+
+.sheet {
+  font-variant-numeric: tabular-nums;
+}
+
+.sheet th,
+.sheet td {
+  border: 1px solid var(--sheet-border);
+  padding: 0;
+  vertical-align: middle;
+  background: #fff;
+}
+
+.sheet thead th,
+.sheet-head th,
+.sheet-head td {
+  background: var(--sheet-head-bg);
+  font-weight: 600;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #475569;
+  padding: 4px 6px;
+  text-align: left;
+  border-bottom: 1px solid var(--sheet-border-strong);
+}
+
+.sheet-section-title {
+  background: var(--sheet-head-bg);
+  border-bottom: 1px solid var(--sheet-border-strong);
+  padding: 5px 8px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #334155;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.sheet-subhead td {
+  background: var(--sheet-subhead-bg);
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #6b4f0a;
+  padding: 3px 6px;
+}
+
+.sheet-row td {
+  height: 26px;
+}
+
+.sheet-cell {
+  position: relative;
+  padding: 0;
+}
+
+.sheet-cell-mono {
+  font-variant-numeric: tabular-nums;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+.sheet-cell-label {
+  padding: 2px 6px;
+  font-size: 12px;
+  color: #475569;
+  background: #fafbfc;
+}
+
+.sheet-hour {
+  background: var(--sheet-head-bg);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-weight: 600;
+  font-size: 13px;
+  text-align: center;
+  color: #1e293b;
+  border-right: 1px solid var(--sheet-border-strong);
+}
+
+.sheet-nedocs {
+  background: #fcfaf2;
+  text-align: center;
+}
+
+.sheet-input {
+  display: block;
+  width: 100%;
+  height: 100%;
+  min-height: 24px;
+  padding: 2px 6px;
+  border: 0;
+  background: transparent;
+  outline: none;
+  color: inherit;
+}
+
+.sheet-input:focus {
+  background: #fffdf0;
+  box-shadow: inset 0 0 0 2px var(--sheet-focus);
+}
+
+.sheet-input-mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-variant-numeric: tabular-nums;
+}
+
+.sheet-select {
+  appearance: none;
+  -webkit-appearance: none;
+  background-image: linear-gradient(45deg, transparent 50%, #94a3b8 50%),
+    linear-gradient(135deg, #94a3b8 50%, transparent 50%);
+  background-position: calc(100% - 10px) 50%, calc(100% - 6px) 50%;
+  background-size: 4px 4px, 4px 4px;
+  background-repeat: no-repeat;
+  padding-right: 18px;
+}
+
+.sheet-row-delete {
+  flex-shrink: 0;
+  width: 20px;
+  height: 22px;
+  margin-right: 2px;
+  border: 0;
+  background: transparent;
+  color: #94a3b8;
+  font-size: 14px;
+  line-height: 1;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.sheet-row:hover .sheet-row-delete {
+  opacity: 1;
+}
+
+.sheet-row-delete:hover {
+  color: #b91c1c;
+  background: #fee2e2;
 }

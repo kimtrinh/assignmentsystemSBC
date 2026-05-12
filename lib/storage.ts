@@ -21,6 +21,8 @@ export type DayState = {
   assignments: Assignment[];
   // shiftSlotId -> choose-in entry
   chooseIns: Record<string, ChooseIn>;
+  // hourBlock -> NEDOCS reading at that hour
+  nedocs: Record<number, string>;
 };
 
 const KEY_PREFIX = "ed-board:v1:";
@@ -30,7 +32,7 @@ export function storageKey(siteCode: string, date: string): string {
 }
 
 export function emptyDay(siteCode: string, date: string): DayState {
-  return { siteCode, date, roster: {}, assignments: [], chooseIns: {} };
+  return { siteCode, date, roster: {}, assignments: [], chooseIns: {}, nedocs: {} };
 }
 
 export function loadDay(siteCode: string, date: string): DayState {
@@ -44,7 +46,8 @@ export function loadDay(siteCode: string, date: string): DayState {
       date,
       roster: parsed.roster ?? {},
       assignments: parsed.assignments ?? [],
-      chooseIns: parsed.chooseIns ?? {}
+      chooseIns: parsed.chooseIns ?? {},
+      nedocs: parsed.nedocs ?? {}
     };
   } catch {
     return emptyDay(siteCode, date);
