@@ -100,9 +100,19 @@ export function predictRotation(
 ): string {
   if (pool.length === 0) return "";
 
+  // Per-provider capacity for this hour, and remaining capacity after the
+  // assignments already entered. Capacity > 2 means the provider is in a
+  // bolus hour: their first hour of shift (3) or the catch-up hour after
+  // a zero-patient first hour (3). Bolus providers keep priority over
+  // regular round-robin until they exhaust their bolus, so two providers
+  // starting the same hour land their 3 patients each interleaved before
+  // anyone else gets one.
+  const caps = new Map<string, number>();
   const remaining = new Map<string, number>();
   for (const s of pool) {
-    remaining.set(s.id, effectiveCapacity(s, hour, roster, allAssignments));
+    const cap = effectiveCapacity(s, hour, roster, allAssignments);
+    caps.set(s.id, cap);
+    remaining.set(s.id, cap);
   }
   for (const a of allAssignments) {
     if (a.hourBlock !== hour) continue;
@@ -110,14 +120,24 @@ export function predictRotation(
     remaining.set(a.shiftSlotId, remaining.get(a.shiftSlotId)! - 1);
   }
 
+  function priorityFor(id: string): [number, number] {
+    const cap = caps.get(id) ?? 0;
+    const rem = remaining.get(id) ?? 0;
+    const inBolus = cap > 2 && rem > 0 ? 1 : 0;
+    return [inBolus, rem];
+  }
+
   let pickedId = "";
   for (let step = 0; step <= steps; step++) {
     let bestIdx = 0;
-    let bestRemaining = remaining.get(pool[0].id)!;
+    let best = priorityFor(pool[0].id);
     for (let i = 1; i < pool.length; i++) {
-      const r = remaining.get(pool[i].id)!;
-      if (r > bestRemaining) {
-        bestRemaining = r;
+      const p = priorityFor(pool[i].id);
+      // Compare lexicographically: bolus-active first, then remaining
+      // capacity (descending). Strict greater-than preserves canonical
+      // pool order on ties.
+      if (p[0] > best[0] || (p[0] === best[0] && p[1] > best[1])) {
+        best = p;
         bestIdx = i;
       }
     }
