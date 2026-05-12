@@ -84,12 +84,61 @@ Edit the `FMC_SLOTS` array in `lib/shiftTemplate.ts` and push. Pages will
 redeploy. Ontario's template is currently empty (`slots: []`) — fill in the
 list there when you have it.
 
+## Optional: Supabase + Vercel for shared, realtime boards
+
+The app runs against a Supabase backend when these two env vars are set; if
+either is missing it falls back to per-browser `localStorage` (the original
+single-user mode, still fine for GitHub Pages).
+
+```bash
+NEXT_PUBLIC_SUPABASE_URL=https://YOUR-PROJECT-REF.supabase.co
+NEXT_PUBLIC_SUPABASE_ANON_KEY=your-anon-key-here
+```
+
+### One-time Supabase setup
+
+1. Create a new project at https://supabase.com (free tier is fine for
+   prototyping with **de-identified / fake** patient data — see HIPAA note
+   below before going live).
+2. Open the SQL editor and run `supabase/migrations/0001_init.sql` from
+   this repo. That creates the `days` table (one row per site+date holding
+   the JSONB DayState), the `audit_log` table, RLS policies, and enables
+   realtime broadcasts on `days`.
+3. **Authentication → URL Configuration**: add your deployed origin (e.g.
+   `https://ed-assign.vercel.app/`) plus `http://localhost:3000/` to the
+   **Redirect URLs** list so magic-link sign-in can come back to the right
+   place.
+4. **Authentication → Email Templates**: optional, customize the magic-link
+   message.
+
+### Deploy to Vercel
+
+1. Import this GitHub repo in Vercel (`Add New → Project`).
+2. Framework: Next.js. Build command: `next build`. Output directory: `out/`.
+3. Under **Environment Variables**, paste in
+   `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_ANON_KEY`.
+4. Deploy. Each push to your tracked branch rebuilds automatically.
+
+### Behavior with vs. without Supabase
+
+| Configured | What happens |
+| --- | --- |
+| Both env vars present | Magic-link sign-in screen → realtime board shared across every signed-in browser. localStorage still mirrors the data, so refreshes work offline. |
+| Either env var missing | No sign-in screen. Single-user localStorage mode, same as the GitHub Pages build. |
+
+### HIPAA note
+
+Patient name, bed, and ESI in this app are PHI. The moment that data lives
+in Supabase you need a **signed Business Associate Agreement** before
+storing real patient data. Supabase signs BAAs only on their paid tier.
+Until then: use this for prototyping with de-identified / fake data only.
+
 ## What's not in V1
 
-- Shared/collaborative state across users (impossible on Pages — see warning).
-- Rule enforcement (round-robin order, PSG counts, L1/L2 override, L4/5
-  weighting, skip carry-over).
-- NEDOCS tracking, per-hour bed snapshots.
-- Authentication / user accounts.
+- Mod Pod and First Track grids (rules §5.5 / §5.6) — separate rotations
+  with their own PSG tapers, not yet modeled.
+- Structured skip tracking with rule enforcement (one skip per provider
+  per patient, lactation limits, code-blue exception).
+- Per-hour bed snapshots and acuity rollups (source sheet §4.7).
 - EHR (Epic) integration.
 - Ontario-specific shift template.

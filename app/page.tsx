@@ -1,5 +1,10 @@
+import AuthGate from "@/components/AuthGate";
 import Board from "@/components/Board";
 
 export default function Page() {
-  return <Board />;
+  return (
+    <AuthGate>
+      <Board />
+    </AuthGate>
+  );
 }
