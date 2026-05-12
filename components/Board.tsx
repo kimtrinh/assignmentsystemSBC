@@ -285,6 +285,7 @@ function Picker({ onOpen }: { onOpen: (site: string, date: string) => void }) {
 }
 
 type RowDraft = Partial<Pick<Assignment, "time" | "bed" | "shiftSlotId" | "comments">>;
+type RowField = "time" | "bed" | "comments";
 
 const MAX_HISTORY = 50;
 
@@ -585,6 +586,75 @@ function DayBoard({
     );
   }
 
+  // Paste from a spreadsheet (Google Sheets, Excel) into the rotation
+  // grid. `startCol` says which column the user pasted into (Time, Bed,
+  // or Comments). `rowsData` is the parsed TSV: outer array = lines,
+  // inner = tab-separated values per line. The first paste line lands
+  // at `startSortOrder`; subsequent lines land at successive sortOrders
+  // within the same hour, materializing new rows as needed and
+  // auto-predicting their physician.
+  function bulkPasteIntoGrid(
+    hour: number,
+    startSortOrder: number,
+    startCol: RowField,
+    rowsData: string[][]
+  ) {
+    const fieldOrder: RowField[] = ["time", "bed", "comments"];
+    const startColIdx = fieldOrder.indexOf(startCol);
+    if (startColIdx < 0) return;
+
+    update(
+      (prev) => {
+        const assignments = [...prev.assignments];
+        const pool = onShiftSlots(effectiveSlots, prev.roster, hour).filter((s) =>
+          MAIN_ROTATION_TEAMS.includes(s.team)
+        );
+
+        rowsData.forEach((cols, rowIdx) => {
+          const targetSortOrder = startSortOrder + rowIdx;
+          const patch: Partial<Assignment> = {};
+          cols.forEach((value, colIdx) => {
+            const fieldIdx = startColIdx + colIdx;
+            if (fieldIdx >= fieldOrder.length) return;
+            patch[fieldOrder[fieldIdx]] = value;
+          });
+          if (Object.keys(patch).length === 0) return;
+
+          const existingIdx = assignments.findIndex(
+            (a) => a.hourBlock === hour && a.sortOrder === targetSortOrder
+          );
+
+          if (existingIdx >= 0) {
+            assignments[existingIdx] = { ...assignments[existingIdx], ...patch };
+          } else {
+            const predictedSlotId = predictRotation(
+              pool,
+              effectiveSlots,
+              assignments,
+              hour,
+              0,
+              prev.roster
+            );
+            assignments.push({
+              id: newId(),
+              hourBlock: hour,
+              time: "",
+              bed: "",
+              shiftSlotId: predictedSlotId,
+              comments: "",
+              sortOrder: targetSortOrder,
+              ...patch
+            });
+          }
+        });
+
+        return { ...prev, assignments };
+      },
+      `Pasted ${rowsData.length} row${rowsData.length === 1 ? "" : "s"} at ${describeHour(hour)}`,
+      { bumpVersion: true }
+    );
+  }
+
   function updateRoster(slotId: string, providerName: string) {
     const trimmed = providerName.trim();
     const slot = effectiveSlotsLookup.get(slotId);
@@ -811,6 +881,7 @@ function DayBoard({
             onDeleteRow={deleteRow}
             onMaterialize={materializeRow}
             onUpdateNedocs={updateNedocs}
+            onBulkPaste={bulkPasteIntoGrid}
           />
         </section>
 
@@ -852,7 +923,8 @@ function RotationSheet({
   onUpdateRow,
   onDeleteRow,
   onMaterialize,
-  onUpdateNedocs
+  onUpdateNedocs,
+  onBulkPaste
 }: {
   assignmentsByHour: Map<number, Assignment[]>;
   allAssignments: Assignment[];
@@ -865,6 +937,12 @@ function RotationSheet({
   onDeleteRow: (id: string) => void;
   onMaterialize: (hourBlock: number, sortOrder: number, patch: RowDraft) => void;
   onUpdateNedocs: (hour: number, value: string) => void;
+  onBulkPaste: (
+    hour: number,
+    startSortOrder: number,
+    startCol: RowField,
+    rowsData: string[][]
+  ) => void;
 }) {
   return (
     <div className="overflow-hidden rounded-sm border border-slate-400 bg-white shadow-sm">
@@ -903,6 +981,7 @@ function RotationSheet({
               onDeleteRow={onDeleteRow}
               onMaterialize={onMaterialize}
               onUpdateNedocs={onUpdateNedocs}
+              onBulkPaste={onBulkPaste}
             />
           ))}
         </tbody>
@@ -923,7 +1002,8 @@ function HourBand({
   onUpdateRow,
   onDeleteRow,
   onMaterialize,
-  onUpdateNedocs
+  onUpdateNedocs,
+  onBulkPaste
 }: {
   hour: number;
   rows: Assignment[];
@@ -937,6 +1017,12 @@ function HourBand({
   onDeleteRow: (id: string) => void;
   onMaterialize: (hourBlock: number, sortOrder: number, patch: RowDraft) => void;
   onUpdateNedocs: (hour: number, value: string) => void;
+  onBulkPaste: (
+    hour: number,
+    startSortOrder: number,
+    startCol: RowField,
+    rowsData: string[][]
+  ) => void;
 }) {
   const maxSort = rows.reduce((acc, a) => Math.max(acc, a.sortOrder), -1);
 
@@ -995,6 +1081,7 @@ function HourBand({
         roster={roster}
         chooseIns={chooseIns}
         hour={hour}
+        currentSortOrder={row.sortOrder}
         isFirst={renderedIndex === 0}
         totalRows={totalRows}
         nedocs={nedocs}
@@ -1002,6 +1089,9 @@ function HourBand({
         onUpdate={(patch) => onUpdateRow(row.id, patch)}
         onDelete={() => onDeleteRow(row.id)}
         onUpdateNedocs={(v) => onUpdateNedocs(hour, v)}
+        onBulkPaste={(startCol, rowsData) =>
+          onBulkPaste(hour, row.sortOrder, startCol, rowsData)
+        }
       />
     );
     renderedIndex++;
@@ -1025,6 +1115,7 @@ function HourBand({
         roster={roster}
         chooseIns={chooseIns}
         hour={hour}
+        currentSortOrder={sortOrder}
         isFirst={renderedIndex === 0}
         totalRows={totalRows}
         nedocs={nedocs}
@@ -1032,6 +1123,9 @@ function HourBand({
         predictedSlotId={predictedSlotId}
         onMaterialize={(patch) => onMaterialize(hour, sortOrder, patch)}
         onUpdateNedocs={(v) => onUpdateNedocs(hour, v)}
+        onBulkPaste={(startCol, rowsData) =>
+          onBulkPaste(hour, sortOrder, startCol, rowsData)
+        }
       />
     );
     renderedIndex++;
@@ -1046,6 +1140,7 @@ function SheetRow({
   roster,
   chooseIns,
   hour,
+  currentSortOrder,
   isFirst,
   totalRows,
   nedocs,
@@ -1054,13 +1149,15 @@ function SheetRow({
   onUpdate,
   onDelete,
   onMaterialize,
-  onUpdateNedocs
+  onUpdateNedocs,
+  onBulkPaste
 }: {
   row: Assignment | null;
   dropdownSlots: ShiftSlot[];
   roster: Record<string, string>;
   chooseIns: Record<string, ChooseIn>;
   hour: number;
+  currentSortOrder: number;
   isFirst: boolean;
   totalRows: number;
   nedocs: string;
@@ -1070,6 +1167,7 @@ function SheetRow({
   onDelete?: () => void;
   onMaterialize?: (patch: RowDraft) => void;
   onUpdateNedocs: (value: string) => void;
+  onBulkPaste: (startCol: RowField, rowsData: string[][]) => void;
 }) {
   const prediction = predictedSlotId ?? "";
   const displayedSlotId = row ? row.shiftSlotId : prediction;
@@ -1144,6 +1242,28 @@ function SheetRow({
     onMaterialize?.(finalPatch);
   }
 
+  // Intercept multi-cell pastes (TSV from Google Sheets / Excel) so the
+  // pasted block lands across the correct cells. Plain single-cell pastes
+  // (no tab, no newline) fall through to the browser's default behavior
+  // so quick text pastes still work.
+  function handlePaste(
+    e: React.ClipboardEvent<HTMLInputElement>,
+    startCol: RowField
+  ) {
+    const text = e.clipboardData?.getData("text/plain") ?? "";
+    if (!text) return;
+    if (!text.includes("\t") && !text.includes("\n")) return;
+    e.preventDefault();
+
+    const lines = text.replace(/\r\n/g, "\n").split("\n");
+    while (lines.length > 0 && lines[lines.length - 1].trim() === "") {
+      lines.pop();
+    }
+    if (lines.length === 0) return;
+    const rowsData = lines.map((l) => l.split("\t"));
+    onBulkPaste(startCol, rowsData);
+  }
+
   return (
     <tr className="sheet-row">
       {isFirst ? (
@@ -1170,6 +1290,7 @@ function SheetRow({
             defaultValue={row?.time ?? panelDefault?.time ?? ""}
             placeholder="HHMM"
             inputMode="numeric"
+            onPaste={(e) => handlePaste(e, "time")}
             onBlur={(e) => {
               const v = e.target.value;
               if (v === (row?.time ?? "")) return;
@@ -1185,6 +1306,7 @@ function SheetRow({
         <input
           key={`${row ? `b-${row.id}` : `bp-${hour}`}-v${version}`}
           defaultValue={row?.bed ?? panelDefault?.bed ?? ""}
+          onPaste={(e) => handlePaste(e, "bed")}
           onBlur={(e) => {
             const v = e.target.value;
             if (v === (row?.bed ?? "")) return;
@@ -1236,6 +1358,7 @@ function SheetRow({
           <input
             key={`${row ? `c-${row.id}` : `cp-${hour}`}-v${version}`}
             defaultValue={row?.comments ?? panelDefault?.comments ?? ""}
+            onPaste={(e) => handlePaste(e, "comments")}
             onBlur={(e) => {
               const v = e.target.value;
               if (v === (row?.comments ?? "")) return;
