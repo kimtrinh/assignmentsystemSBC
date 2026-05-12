@@ -14,6 +14,7 @@ export type SiteDef = {
 
 const FMC_SLOTS: ShiftSlot[] = [
   { id: "fmc-red-5a-3p",   label: "Red 5a-3p",      team: "Red",  startTime: "05:00", endTime: "15:00" },
+  { id: "fmc-blue-5a-3p",  label: "Blue 5a-3p",     team: "Blue", startTime: "05:00", endTime: "15:00" },
   { id: "fmc-red-6a-4p",   label: "Red 6a-4p",      team: "Red",  startTime: "06:00", endTime: "16:00" },
   { id: "fmc-blue-6a-4p",  label: "Blue 6a-4p",     team: "Blue", startTime: "06:00", endTime: "16:00" },
   { id: "fmc-blue-8a-6p",  label: "Blue 8a-6p",     team: "Blue", startTime: "08:00", endTime: "18:00" },
