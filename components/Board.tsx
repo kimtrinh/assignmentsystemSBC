@@ -21,6 +21,79 @@ import {
 
 const MIN_VISIBLE_ROWS_PER_HOUR = 4;
 
+type ParsedShiftLine = { raw: string; name: string; timeRange: string };
+
+function parseScheduleText(text: string): ParsedShiftLine[] {
+  const out: ParsedShiftLine[] = [];
+  for (const raw of text.split(/\r?\n/)) {
+    const trimmed = raw.trim();
+    if (!trimmed) continue;
+    const m = trimmed.match(/^(.+?)\s+(\d{1,2}[ap]-\d{1,2}[ap])\s*$/i);
+    if (!m) continue;
+    out.push({ raw: trimmed, name: m[1].trim(), timeRange: m[2].toLowerCase() });
+  }
+  return out;
+}
+
+function slotTimeRange(label: string): string {
+  const m = label.match(/(\d{1,2}[ap]-\d{1,2}[ap])\s*$/i);
+  return m ? m[1].toLowerCase() : "";
+}
+
+function startHourFromAmpm(piece: string): number | null {
+  const m = piece.match(/^(\d{1,2})([ap])$/i);
+  if (!m) return null;
+  let h = parseInt(m[1], 10);
+  if (Number.isNaN(h)) return null;
+  const ampm = m[2].toLowerCase();
+  if (ampm === "p" && h !== 12) h += 12;
+  if (ampm === "a" && h === 12) h = 0;
+  return h;
+}
+
+function slotStartHour(label: string): number | null {
+  const m = label.match(/(\d{1,2}[ap])-\d{1,2}[ap]\s*$/i);
+  return m ? startHourFromAmpm(m[1]) : null;
+}
+
+function rangeStartHour(range: string): number | null {
+  const m = range.match(/^(\d{1,2}[ap])-/i);
+  return m ? startHourFromAmpm(m[1]) : null;
+}
+
+function autoMatchSchedule(
+  parsed: ParsedShiftLine[],
+  slots: ShiftSlot[]
+): Map<number, string> {
+  const result = new Map<number, string>();
+  const taken = new Set<string>();
+
+  parsed.forEach((entry, i) => {
+    const exact = slots.find(
+      (s) => !taken.has(s.id) && slotTimeRange(s.label) === entry.timeRange
+    );
+    if (exact) {
+      taken.add(exact.id);
+      result.set(i, exact.id);
+    }
+  });
+
+  parsed.forEach((entry, i) => {
+    if (result.has(i)) return;
+    const start = rangeStartHour(entry.timeRange);
+    if (start === null) return;
+    const fallback = slots.find(
+      (s) => !taken.has(s.id) && slotStartHour(s.label) === start
+    );
+    if (fallback) {
+      taken.add(fallback.id);
+      result.set(i, fallback.id);
+    }
+  });
+
+  return result;
+}
+
 function todayInLA(): string {
   return new Intl.DateTimeFormat("en-CA", {
     timeZone: "America/Los_Angeles",
@@ -164,9 +237,11 @@ function DayBoard({
   onLeave: () => void;
 }) {
   const [state, setState] = useState<DayState>(() => emptyDay(site.code, date));
+  const [rosterVersion, setRosterVersion] = useState(0);
 
   useEffect(() => {
     setState(loadDay(site.code, date));
+    setRosterVersion((v) => v + 1);
   }, [site.code, date]);
 
   function update(mutator: (prev: DayState) => DayState) {
@@ -237,6 +312,19 @@ function DayBoard({
     });
   }
 
+  function applyRosterPaste(updates: { slotId: string; provider: string }[]) {
+    update((prev) => {
+      const roster = { ...prev.roster };
+      for (const { slotId, provider } of updates) {
+        const trimmed = provider.trim();
+        if (trimmed) roster[slotId] = trimmed;
+        else delete roster[slotId];
+      }
+      return { ...prev, roster };
+    });
+    setRosterVersion((v) => v + 1);
+  }
+
   function updateChooseIn(slotId: string, patch: Partial<ChooseIn>) {
     update((prev) => {
       const current = prev.chooseIns[slotId] ?? { timeBed: "", esiOrPatient: "" };
@@ -292,9 +380,14 @@ function DayBoard({
         </section>
 
         <aside className="space-y-4">
+          <PasteSchedulePanel
+            slots={site.slots}
+            onApply={applyRosterPaste}
+          />
           <RosterPanel
             grouped={groupedRoster}
             roster={state.roster}
+            version={rosterVersion}
             onUpdate={updateRoster}
           />
           <ChooseInPanel
@@ -550,13 +643,164 @@ function SheetRow({
   );
 }
 
+function PasteSchedulePanel({
+  slots,
+  onApply
+}: {
+  slots: ShiftSlot[];
+  onApply: (updates: { slotId: string; provider: string }[]) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [text, setText] = useState("");
+  const [overrides, setOverrides] = useState<Record<number, string>>({});
+
+  const parsed = useMemo(() => parseScheduleText(text), [text]);
+  const auto = useMemo(() => autoMatchSchedule(parsed, slots), [parsed, slots]);
+
+  function effectiveSlotId(i: number): string {
+    if (overrides[i] !== undefined) return overrides[i];
+    return auto.get(i) ?? "";
+  }
+
+  function apply() {
+    const seen = new Set<string>();
+    const updates: { slotId: string; provider: string }[] = [];
+    parsed.forEach((entry, i) => {
+      const slotId = effectiveSlotId(i);
+      if (!slotId || seen.has(slotId)) return;
+      seen.add(slotId);
+      updates.push({ slotId, provider: `${entry.name} ${entry.timeRange}` });
+    });
+    if (updates.length === 0) return;
+    onApply(updates);
+    setText("");
+    setOverrides({});
+    setOpen(false);
+  }
+
+  function reset() {
+    setText("");
+    setOverrides({});
+  }
+
+  if (slots.length === 0) return null;
+
+  const totalLines = text.split(/\r?\n/).filter((l) => l.trim()).length;
+  const unparsed = totalLines - parsed.length;
+  const matched = parsed.filter((_, i) => effectiveSlotId(i)).length;
+
+  return (
+    <div className="overflow-hidden rounded-sm border border-slate-400 bg-white">
+      <button
+        onClick={() => setOpen((v) => !v)}
+        className="flex w-full items-center justify-between border-b border-slate-300 bg-slate-50 px-3 py-1.5 text-left text-xs font-semibold uppercase tracking-wide text-slate-700 hover:bg-slate-100"
+        aria-expanded={open}
+      >
+        <span>Paste schedule</span>
+        <span className="text-slate-500">{open ? "▾" : "▸"}</span>
+      </button>
+      {open ? (
+        <div className="space-y-2 p-2">
+          <textarea
+            value={text}
+            onChange={(e) => {
+              setText(e.target.value);
+              setOverrides({});
+            }}
+            placeholder={"Joshi 6a-4p\nCarr 10a-10p\nKhauv 1p-11p\n..."}
+            rows={8}
+            className="w-full rounded border border-slate-300 px-2 py-1 font-mono text-[12px] leading-snug"
+            spellCheck={false}
+          />
+
+          {parsed.length === 0 ? (
+            <div className="text-[11px] text-slate-500">
+              Paste lines like <span className="font-mono">Joshi 6a-4p</span>.
+            </div>
+          ) : (
+            <>
+              <div className="text-[11px] text-slate-600">
+                {matched} of {parsed.length} auto-matched
+                {unparsed > 0 ? ` · ${unparsed} unrecognized line${unparsed === 1 ? "" : "s"}` : ""}
+                . Review and edit before applying.
+              </div>
+              <div className="max-h-80 overflow-y-auto rounded border border-slate-200">
+                <table className="w-full table-fixed border-collapse text-[12px]">
+                  <colgroup>
+                    <col style={{ width: "45%" }} />
+                    <col />
+                  </colgroup>
+                  <tbody>
+                    {parsed.map((entry, i) => {
+                      const slotId = effectiveSlotId(i);
+                      return (
+                        <tr key={i} className="border-t border-slate-200">
+                          <td className="px-2 py-1 align-middle">
+                            <div className="truncate font-medium text-slate-800">
+                              {entry.name}
+                            </div>
+                            <div className="font-mono text-[11px] text-slate-500">
+                              {entry.timeRange}
+                            </div>
+                          </td>
+                          <td className="px-1 py-1">
+                            <select
+                              value={slotId}
+                              onChange={(e) =>
+                                setOverrides((o) => ({ ...o, [i]: e.target.value }))
+                              }
+                              className={`w-full rounded border px-1 py-0.5 text-[12px] ${
+                                slotId
+                                  ? "border-slate-300"
+                                  : "border-amber-400 bg-amber-50"
+                              }`}
+                            >
+                              <option value="">— skip —</option>
+                              {slots.map((s) => (
+                                <option key={s.id} value={s.id}>
+                                  {s.label}
+                                </option>
+                              ))}
+                            </select>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+              <div className="flex items-center justify-between gap-2 pt-1">
+                <button
+                  onClick={reset}
+                  className="text-[12px] text-slate-500 underline"
+                >
+                  Clear
+                </button>
+                <button
+                  onClick={apply}
+                  disabled={matched === 0}
+                  className="rounded bg-slate-900 px-3 py-1 text-[12px] text-white disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  Apply {matched} to schedule
+                </button>
+              </div>
+            </>
+          )}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 function RosterPanel({
   grouped,
   roster,
+  version,
   onUpdate
 }: {
   grouped: { team: string; slots: ShiftSlot[] }[];
   roster: Record<string, string>;
+  version: number;
   onUpdate: (slotId: string, providerName: string) => void;
 }) {
   if (grouped.length === 0) {
@@ -581,6 +825,7 @@ function RosterPanel({
               team={team}
               slots={slots}
               roster={roster}
+              version={version}
               onUpdate={onUpdate}
             />
           ))}
@@ -594,11 +839,13 @@ function FragmentTeam({
   team,
   slots,
   roster,
+  version,
   onUpdate
 }: {
   team: string;
   slots: ShiftSlot[];
   roster: Record<string, string>;
+  version: number;
   onUpdate: (slotId: string, providerName: string) => void;
 }) {
   return (
@@ -611,7 +858,7 @@ function FragmentTeam({
           <td className="sheet-cell sheet-cell-label">{s.label}</td>
           <td className="sheet-cell">
             <input
-              key={`r-${s.id}`}
+              key={`r-${s.id}-v${version}`}
               defaultValue={roster[s.id] ?? ""}
               onBlur={(e) => onUpdate(s.id, e.target.value)}
               className="sheet-input"
