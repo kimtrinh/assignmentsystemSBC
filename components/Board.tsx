@@ -21,6 +21,7 @@ import {
   saveDay
 } from "@/lib/storage";
 import { onShiftSlots, predictRotation } from "@/lib/rotation";
+import { isChooseInHour } from "@/lib/psg";
 
 const MIN_VISIBLE_ROWS_PER_HOUR = 4;
 
@@ -603,7 +604,7 @@ function HourBand({
       ))}
       {placeholders.map((sortOrder, i) => {
         const idx = rows.length + i;
-        const predictedSlotId = predictRotation(onShift, rows, i);
+        const predictedSlotId = predictRotation(onShift, rows, hour, i);
         return (
           <SheetRow
             key={`p-${hour}-${sortOrder}`}
@@ -653,6 +654,10 @@ function SheetRow({
 }) {
   const prediction = predictedSlotId ?? "";
   const displayedSlotId = row ? row.shiftSlotId : prediction;
+  const displayedSlot = displayedSlotId
+    ? dropdownSlots.find((s) => s.id === displayedSlotId)
+    : undefined;
+  const chooseIn = displayedSlot ? isChooseInHour(displayedSlot, hour) : false;
 
   function commit(patch: RowDraft) {
     if (row) {
@@ -698,20 +703,30 @@ function SheetRow({
         />
       </td>
       <td className="sheet-cell">
-        <select
-          value={displayedSlotId}
-          onChange={(e) => commit({ shiftSlotId: e.target.value })}
-          className={`sheet-input sheet-select${
-            !row && prediction ? " sheet-input-predicted" : ""
-          }`}
-        >
-          <option value="">—</option>
-          {dropdownSlots.map((s) => (
-            <option key={s.id} value={s.id}>
-              {roster[s.id]?.trim() ? `${roster[s.id]} (${s.label})` : s.label}
-            </option>
-          ))}
-        </select>
+        <div className="flex items-center">
+          <select
+            value={displayedSlotId}
+            onChange={(e) => commit({ shiftSlotId: e.target.value })}
+            className={`sheet-input sheet-select${
+              !row && prediction ? " sheet-input-predicted" : ""
+            }`}
+          >
+            <option value="">—</option>
+            {dropdownSlots.map((s) => (
+              <option key={s.id} value={s.id}>
+                {roster[s.id]?.trim() ? `${roster[s.id]} (${s.label})` : s.label}
+              </option>
+            ))}
+          </select>
+          {chooseIn ? (
+            <span
+              className="sheet-chooseIn-badge"
+              title="Choose-in hour (any ESI, longest waiting)"
+            >
+              ★
+            </span>
+          ) : null}
+        </div>
       </td>
       <td className="sheet-cell">
         <div className="flex items-center">
