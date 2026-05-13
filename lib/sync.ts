@@ -20,6 +20,7 @@ type DayRow = {
   nedocs: Record<string, string>;
   extra_slots: DayState["extraSlots"];
   updated_at: string | null;
+  updated_by: string | null;
 };
 
 function rowToDayState(row: DayRow): DayState {
@@ -39,7 +40,7 @@ function rowToDayState(row: DayRow): DayState {
   };
 }
 
-function dayStateToRow(state: DayState): Omit<DayRow, "updated_at"> {
+function dayStateToRow(state: DayState): Omit<DayRow, "updated_at" | "updated_by"> {
   const nedocs: Record<string, string> = {};
   for (const [k, v] of Object.entries(state.nedocs ?? {})) nedocs[String(k)] = v;
   return {
@@ -82,7 +83,14 @@ export async function persistDay(state: DayState): Promise<void> {
   const supabase = getSupabase();
   if (!supabase) return;
 
-  const row = dayStateToRow(state);
+  // Tag the write with the current auth user id so subscribers can ignore
+  // echoes of their own writes — otherwise every keystroke round-trips
+  // Supabase and remounts the cell inputs mid-typing.
+  const { data: authData } = await supabase.auth.getUser();
+  const row = {
+    ...dayStateToRow(state),
+    updated_by: authData.user?.id ?? null
+  };
   const { error } = await supabase
     .from("days")
     .upsert(row, { onConflict: "site_code,date" });
@@ -147,6 +155,14 @@ export function subscribeToDay(
   const supabase = getSupabase();
   if (!supabase) return () => undefined;
 
+  // Resolve "who am I" once so we can drop echoes of our own writes. Without
+  // this, every local edit round-trips Supabase and re-renders the board,
+  // which remounts the uncontrolled cell inputs mid-typing.
+  let selfUserId: string | null = null;
+  void supabase.auth.getUser().then(({ data }) => {
+    selfUserId = data.user?.id ?? null;
+  });
+
   const channel = supabase
     .channel(`day:${siteCode}:${date}`)
     .on(
@@ -160,6 +176,7 @@ export function subscribeToDay(
       (payload) => {
         const row = payload.new as DayRow | undefined;
         if (!row || row.date !== date) return;
+        if (selfUserId && row.updated_by === selfUserId) return;
         onUpdate(rowToDayState(row));
       }
     )
