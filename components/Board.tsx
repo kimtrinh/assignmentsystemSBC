@@ -1,7 +1,7 @@
 "use client";
 
 import { useContext, useEffect, useMemo, useReducer, useState } from "react";
-import { IdentityContext } from "@/components/AuthGate";
+import { IdentityContext, type SessionInfo } from "@/components/AuthGate";
 import { HOUR_BLOCKS, hourLabel } from "@/lib/hours";
 import {
   MAIN_ROTATION_TEAMS,
@@ -215,6 +215,22 @@ function Picker({ onOpen }: { onOpen: (site: string, date: string) => void }) {
   const today = todayInLA();
   const [site, setSite] = useState(SITES[0]?.code ?? "");
   const [date, setDate] = useState(today);
+  const { session, sendMagicLink, signOut } = useContext(IdentityContext);
+  const [showSignIn, setShowSignIn] = useState(false);
+  const [email, setEmail] = useState("");
+  const [sendStatus, setSendStatus] = useState<
+    | { kind: "idle" }
+    | { kind: "sending" }
+    | { kind: "sent" }
+    | { kind: "error"; message: string }
+  >({ kind: "idle" });
+
+  async function handleSendLink() {
+    setSendStatus({ kind: "sending" });
+    const result = await sendMagicLink(email);
+    if (result.ok) setSendStatus({ kind: "sent" });
+    else setSendStatus({ kind: "error", message: result.error });
+  }
 
   return (
     <main className="mx-auto max-w-2xl p-8">
@@ -223,11 +239,58 @@ function Picker({ onOpen }: { onOpen: (site: string, date: string) => void }) {
         Pick a site and a date to open that day&apos;s assignment board.
       </p>
 
-      <div className="mb-4 rounded border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
-        <strong>Single-user only.</strong> This build stores all data in your
-        browser. Other people see their own empty boards — no live sync.
-        Clearing browser data deletes your boards.
-      </div>
+      <SessionBanner
+        session={session}
+        showSignIn={showSignIn}
+        toggleSignIn={() => {
+          setShowSignIn((v) => !v);
+          setSendStatus({ kind: "idle" });
+        }}
+        signOut={() => {
+          setSendStatus({ kind: "idle" });
+          void signOut();
+        }}
+      />
+
+      {showSignIn && session.kind !== "no-backend" && session.kind !== "email" ? (
+        <div className="mb-4 space-y-2 rounded border border-slate-300 bg-white p-3 text-sm">
+          <div className="text-slate-700">
+            Enter your work email — we&apos;ll send a one-time link. You can
+            keep using the board anonymously meanwhile; the link just upgrades
+            your session to a stable email identity.
+          </div>
+          <div className="flex flex-wrap items-end gap-2">
+            <label className="flex-1 min-w-[200px] text-xs">
+              <div className="mb-1 text-slate-600">Email</div>
+              <input
+                type="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                placeholder="you@kp.org"
+                className="w-full rounded border border-slate-300 px-2 py-1.5 text-sm"
+              />
+            </label>
+            <button
+              onClick={handleSendLink}
+              disabled={!email.trim() || sendStatus.kind === "sending"}
+              className="rounded bg-slate-900 px-3 py-2 text-sm text-white disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              {sendStatus.kind === "sending" ? "Sending…" : "Send sign-in link"}
+            </button>
+          </div>
+          {sendStatus.kind === "sent" ? (
+            <div className="rounded border border-emerald-300 bg-emerald-50 p-2 text-xs text-emerald-900">
+              Check your inbox for a Supabase email. Open the link on this
+              device to finish signing in.
+            </div>
+          ) : null}
+          {sendStatus.kind === "error" ? (
+            <div className="rounded border border-red-300 bg-red-50 p-2 text-xs text-red-900">
+              {sendStatus.message}
+            </div>
+          ) : null}
+        </div>
+      ) : null}
 
       <ul className="mb-6 space-y-3">
         {SITES.map((s) => (
@@ -281,6 +344,64 @@ function Picker({ onOpen }: { onOpen: (site: string, date: string) => void }) {
         </div>
       </div>
     </main>
+  );
+}
+
+function SessionBanner({
+  session,
+  showSignIn,
+  toggleSignIn,
+  signOut
+}: {
+  session: SessionInfo;
+  showSignIn: boolean;
+  toggleSignIn: () => void;
+  signOut: () => void;
+}) {
+  if (session.kind === "loading") {
+    return (
+      <div className="mb-4 rounded border border-slate-200 bg-slate-50 p-3 text-sm text-slate-500">
+        Connecting…
+      </div>
+    );
+  }
+  if (session.kind === "no-backend") {
+    return (
+      <div className="mb-4 rounded border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
+        <strong>Single-user only.</strong> This build stores all data in your
+        browser. Other people see their own empty boards — no live sync.
+        Clearing browser data deletes your boards.
+      </div>
+    );
+  }
+  if (session.kind === "email") {
+    return (
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-2 rounded border border-emerald-300 bg-emerald-50 p-3 text-sm text-emerald-900">
+        <div>
+          <strong>Signed in as {session.email}.</strong> Boards are shared with
+          everyone signed in to this workspace.
+        </div>
+        <button onClick={signOut} className="text-xs underline">
+          Sign out
+        </button>
+      </div>
+    );
+  }
+  // anonymous
+  return (
+    <div className="mb-4 flex flex-wrap items-center justify-between gap-2 rounded border border-slate-300 bg-slate-50 p-3 text-sm text-slate-700">
+      <div>
+        <strong>Shared board, signed in anonymously.</strong> Edits sync live to
+        every browser on this app. Want a stable identity that follows you to
+        other devices?
+      </div>
+      <button
+        onClick={toggleSignIn}
+        className="rounded border border-slate-400 bg-white px-3 py-1.5 text-xs"
+      >
+        {showSignIn ? "Hide" : "Sign in with email"}
+      </button>
+    </div>
   );
 }
 
