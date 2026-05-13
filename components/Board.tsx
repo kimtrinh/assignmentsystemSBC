@@ -1437,7 +1437,7 @@ function SheetRow({
         />
       </td>
       <td
-        className={`sheet-cell${
+        className={`sheet-cell sheet-cell-physician${
           displayedSlot ? ` sheet-team-stripe sheet-team-stripe-${displayedSlot.team}` : ""
         }`}
       >
@@ -1478,7 +1478,7 @@ function SheetRow({
           ) : null}
         </div>
       </td>
-      <td className="sheet-cell">
+      <td className="sheet-cell sheet-cell-comments">
         <div className="flex items-center">
           <input
             key={`${row ? `c-${row.id}` : `cp-${hour}`}-v${version}`}
@@ -1700,7 +1700,9 @@ function RosterPanel({
   }
   return (
     <div className="overflow-hidden rounded-sm border border-slate-400 bg-white">
-      <div className="sheet-section-title">Provider Schedule</div>
+      <div className="sheet-section-title sheet-section-title-schedule">
+        Provider Schedule
+      </div>
       <table className="sheet w-full table-fixed border-collapse text-[13px]">
         <colgroup>
           <col style={{ width: "52%" }} />
@@ -1933,7 +1935,9 @@ function ChooseInPanel({
   }
   return (
     <div className="overflow-hidden rounded-sm border border-slate-400 bg-white">
-      <div className="sheet-section-title">Choose-in Patient</div>
+      <div className="sheet-section-title sheet-section-title-chooseIn">
+        Choose-in Patient
+      </div>
       <table className="sheet w-full table-fixed border-collapse text-[13px]">
         <colgroup>
           <col style={{ width: "40%" }} />

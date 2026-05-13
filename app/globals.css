@@ -25,6 +25,13 @@
   --sheet-row-alt: #fafbfc;
   --sheet-focus: #1a73e8;
 
+  /* Source-sheet accent colors */
+  --sheet-red: #cc0000;
+  --sheet-gold-bg: #ffe599;       /* hour band */
+  --sheet-gold-soft-bg: #fff2cc;  /* NEDOCS-style softer yellow */
+  --sheet-green-bg: #b6d7a8;
+  --sheet-green-fg: #38761d;
+
   --team-red-bg: #fce4e4;
   --team-red-fg: #c00000;
   --team-blue-bg: #c9daf8;
@@ -94,6 +101,15 @@ textarea {
   letter-spacing: 0.04em;
 }
 
+/* Source sheet renders "Provider Schedule" and "Choose-in Patient"
+ * headers on a green band. Match that. */
+.sheet-section-title-schedule,
+.sheet-section-title-chooseIn {
+  background: var(--sheet-green-bg);
+  color: var(--sheet-green-fg);
+  border-bottom-color: var(--sheet-green-fg);
+}
+
 /* Team subhead rows in the Provider Schedule */
 .sheet-subhead td {
   background: var(--sheet-subhead-bg);
@@ -147,22 +163,41 @@ textarea {
 .sheet-cell-label {
   padding: 2px 6px;
   font-size: 12px;
-  color: #444746;
-  background: #fafbfc;
+  color: var(--sheet-red);
+  background: var(--sheet-gold-bg);
+  font-weight: 600;
 }
 
 .sheet-hour {
-  background: #fff8e1;
+  background: var(--sheet-gold-bg);
   font-weight: 700;
   font-size: 13px;
   text-align: center;
-  color: #202124;
+  color: var(--sheet-red);
   border-right: 1px solid var(--sheet-border-strong);
 }
 
 .sheet-nedocs {
-  background: #fff8e1;
+  background: var(--sheet-gold-soft-bg);
   text-align: center;
+  color: var(--sheet-red);
+  font-weight: 700;
+}
+
+.sheet-nedocs input {
+  color: var(--sheet-red);
+  font-weight: 700;
+  text-align: center;
+}
+
+/* The Physician and Comments columns in the source sheet are rendered
+ * in red text (Arial). Match that for the on-screen rendering — the
+ * dropdown text, the Comments input, the option list, and the badges
+ * (last / nxlast / choose-in / carry) all live in this color family. */
+.sheet-cell-physician .sheet-input,
+.sheet-cell-physician select,
+.sheet-cell-comments input {
+  color: var(--sheet-red);
 }
 
 .sheet-input {
@@ -278,7 +313,7 @@ textarea {
   height: 22px;
   margin-left: 2px;
   font-size: 12px;
-  color: #b45309;
+  color: var(--sheet-red);
   cursor: help;
 }
 
@@ -289,10 +324,10 @@ textarea {
   padding: 1px 4px;
   font-size: 10px;
   font-weight: 700;
-  text-transform: uppercase;
+  font-style: italic;
   letter-spacing: 0.04em;
-  color: #5f6368;
-  background: #f1f3f4;
+  color: var(--sheet-red);
+  background: transparent;
   border-radius: 2px;
 }
 
@@ -335,7 +370,7 @@ textarea {
   flex-shrink: 0;
   width: 16px;
   height: 22px;
-  color: #b45309;
+  color: var(--sheet-red);
   font-size: 11px;
   cursor: help;
 }
