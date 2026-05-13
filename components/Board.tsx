@@ -935,6 +935,7 @@ function DayBoard({
             ) : null}
           </div>
           <div className="flex flex-wrap items-center gap-2 text-sm">
+            <SyncPill />
             <label className="flex items-center gap-1 text-xs text-slate-600">
               <span>You:</span>
               <input
@@ -1990,6 +1991,42 @@ function formatLogTime(ts: number): string {
   const mm = String(d.getMinutes()).padStart(2, "0");
   const ss = String(d.getSeconds()).padStart(2, "0");
   return `${hh}:${mm}:${ss}`;
+}
+
+function SyncPill() {
+  const { session } = useContext(IdentityContext);
+  if (session.kind === "loading") {
+    return (
+      <span
+        className="inline-flex items-center gap-1 rounded-full border border-slate-300 bg-slate-50 px-2 py-0.5 text-[11px] text-slate-600"
+        title="Checking the backend connection…"
+      >
+        <span className="h-2 w-2 rounded-full bg-slate-400" />
+        Connecting
+      </span>
+    );
+  }
+  if (session.kind === "no-backend") {
+    return (
+      <span
+        className="inline-flex items-center gap-1 rounded-full border border-amber-300 bg-amber-50 px-2 py-0.5 text-[11px] text-amber-900"
+        title="No backend configured — edits stay in this browser only. Set the NEXT_PUBLIC_SUPABASE_* secrets in the repo to enable shared realtime."
+      >
+        <span className="h-2 w-2 rounded-full bg-amber-500" />
+        Local only
+      </span>
+    );
+  }
+  const label = session.kind === "email" ? `Live · ${session.email}` : "Live sync";
+  return (
+    <span
+      className="inline-flex items-center gap-1 rounded-full border border-emerald-300 bg-emerald-50 px-2 py-0.5 text-[11px] text-emerald-900"
+      title="Shared with everyone using this app — edits propagate within ~1s."
+    >
+      <span className="h-2 w-2 rounded-full bg-emerald-500" />
+      {label}
+    </span>
+  );
 }
 
 function AuditLogPanel({
