@@ -33,6 +33,13 @@ jobs:
       - name: Build static site
         env:
           GITHUB_PAGES: "true"
+          # Optional: set these as Repository Secrets in Settings →
+          # Secrets and variables → Actions to opt the deployed app
+          # into Supabase + realtime sync. When empty (the default),
+          # the app falls back to per-browser localStorage and every
+          # visitor sees their own private board.
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
         run: npm run build
 
       - name: Add .nojekyll

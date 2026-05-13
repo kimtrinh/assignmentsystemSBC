@@ -115,13 +115,41 @@ NEXT_PUBLIC_SUPABASE_ANON_KEY=your-anon-key-here
    (e.g. `https://ed-assign.vercel.app/`) plus `http://localhost:3000/`
    to the **Site URL** / **Redirect URLs** list.
 
-### Deploy to Vercel
+### Turning it on with the GitHub Pages workflow (easiest)
+
+`.github/workflows/pages.yml` already reads `NEXT_PUBLIC_SUPABASE_URL`
+and `NEXT_PUBLIC_SUPABASE_ANON_KEY` from repository secrets at build
+time. To enable shared realtime on the live Pages URL:
+
+1. In your GitHub repo: **Settings → Secrets and variables → Actions
+   → New repository secret.**
+2. Add `NEXT_PUBLIC_SUPABASE_URL` with your Project URL.
+3. Add `NEXT_PUBLIC_SUPABASE_ANON_KEY` with the anon public key.
+4. Push to `main` (or re-run the Pages workflow). The next deploy will
+   inline the values and the **"Local only"** pill in the DayBoard
+   header will switch to **"Live sync"**.
+
+There's no risk in leaving the secrets unset — the workflow already
+handles the empty case and just builds the localStorage-only app.
+
+### Or: deploy to Vercel
 
 1. Import this GitHub repo in Vercel (`Add New → Project`).
 2. Framework: Next.js. Build command: `next build`. Output directory: `out/`.
 3. Under **Environment Variables**, paste in
    `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_ANON_KEY`.
 4. Deploy. Each push to your tracked branch rebuilds automatically.
+
+### How to tell if sync is on
+
+A small status pill in the DayBoard header reads:
+
+- 🟢 **Live sync** — Supabase configured, anonymous session, realtime
+  subscription active. Edits propagate within ~1s.
+- 🟢 **Live · you@example.com** — same as above but signed in via the
+  optional email magic link from the Picker.
+- 🟡 **Local only** — no backend env vars set. Per-browser only.
+- ⚪ **Connecting** — waiting on the first getSession to resolve.
 
 ### Behavior with vs. without Supabase
 
