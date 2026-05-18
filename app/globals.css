@@ -150,6 +150,12 @@ textarea {
   height: 24px;
 }
 
+/* Bold dividing line between hour blocks. The first row of each hour
+ * picks up a thicker top border so the rotation grid reads as bands. */
+.sheet-row-hour-first td {
+  border-top: 2px solid #5f6368;
+}
+
 .sheet-cell {
   position: relative;
   padding: 0;

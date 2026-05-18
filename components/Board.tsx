@@ -1400,7 +1400,7 @@ function SheetRow({
   }
 
   return (
-    <tr className="sheet-row">
+    <tr className={`sheet-row${isFirst ? " sheet-row-hour-first" : ""}`}>
       {isFirst ? (
         <td rowSpan={totalRows} className="sheet-hour">
           {hourLabel(hour)}
