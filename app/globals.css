@@ -270,6 +270,29 @@ textarea {
   background: #fce8e6;
 }
 
+.sheet-row-shuffle {
+  flex-shrink: 0;
+  width: 20px;
+  height: 22px;
+  margin-right: 2px;
+  border: 0;
+  background: transparent;
+  color: #9aa0a6;
+  font-size: 14px;
+  line-height: 1;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.sheet-row:hover .sheet-row-shuffle {
+  opacity: 1;
+}
+
+.sheet-row-shuffle:hover {
+  color: var(--sheet-red);
+  background: var(--sheet-gold-bg);
+}
+
 .sheet-row-clear {
   display: inline-flex;
   align-items: center;
