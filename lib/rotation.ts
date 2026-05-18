@@ -1,5 +1,6 @@
 import type { Assignment } from "./storage";
 import type { ShiftSlot } from "./shiftTemplate";
+import { MAIN_ROTATION_TEAMS } from "./shiftTemplate";
 import { effectiveShift } from "./effectiveShift";
 import { HOUR_BLOCKS } from "./hours";
 import { isRotationActive, psgCapacityAt } from "./psg";
@@ -198,4 +199,77 @@ export function predictRotation(
     remaining.set(pickedId, (remaining.get(pickedId) ?? 0) - 1);
   }
   return pickedId;
+}
+
+// Re-run the round-robin from a given row onward across every later hour.
+// Triggered when a clerk manually overrides a row's provider — every
+// downstream rotation-team row gets re-assigned to whoever round-robin
+// would pick at that position given the new history.
+//
+// Rows whose current shiftSlotId is on a non-rotation team (DOD / FLEX /
+// PEDS / PITT / MP) are deliberately left alone: those are manual
+// off-rotation picks (DOD coverage, lactation breaks, etc.) and the clerk
+// already chose them on purpose.
+//
+// Rows whose current shiftSlotId is empty or points to a slot that's no
+// longer in the rotation pool (provider went off-shift, was deleted from
+// the roster) are also left alone — there's nothing meaningful for the
+// round-robin to swap them to.
+export function reshuffleDownstream(
+  assignments: Assignment[],
+  fromHour: number,
+  fromSortOrder: number,
+  effectiveSlots: ShiftSlot[],
+  roster: Record<string, string>
+): Assignment[] {
+  const sorted = [...assignments].sort((a, b) => {
+    const ha = hourIndex(a.hourBlock);
+    const hb = hourIndex(b.hourBlock);
+    if (ha !== hb) return ha - hb;
+    return a.sortOrder - b.sortOrder;
+  });
+
+  const startIdx = sorted.findIndex(
+    (a) => a.hourBlock === fromHour && a.sortOrder === fromSortOrder
+  );
+  if (startIdx === -1) return assignments;
+
+  const slotsById = new Map(effectiveSlots.map((s) => [s.id, s]));
+  const poolByHour = new Map<number, ShiftSlot[]>();
+  function poolFor(hour: number): ShiftSlot[] {
+    let p = poolByHour.get(hour);
+    if (!p) {
+      p = onShiftSlots(effectiveSlots, roster, hour).filter((s) =>
+        MAIN_ROTATION_TEAMS.includes(s.team)
+      );
+      poolByHour.set(hour, p);
+    }
+    return p;
+  }
+
+  // Walk forward and re-pick each rotation-team row using the cumulative
+  // history of every row before it (including reshuffled picks).
+  const history: Assignment[] = sorted.slice(0, startIdx + 1);
+  for (let i = startIdx + 1; i < sorted.length; i++) {
+    const r = sorted[i];
+    const curSlot = slotsById.get(r.shiftSlotId);
+    if (!curSlot || !MAIN_ROTATION_TEAMS.includes(curSlot.team)) {
+      history.push(r);
+      continue;
+    }
+    const pool = poolFor(r.hourBlock);
+    const predicted = predictRotation(
+      pool,
+      effectiveSlots,
+      history,
+      r.hourBlock,
+      0,
+      roster
+    );
+    const updated = predicted ? { ...r, shiftSlotId: predicted } : r;
+    sorted[i] = updated;
+    history.push(updated);
+  }
+
+  return sorted;
 }

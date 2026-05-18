@@ -36,7 +36,8 @@ import {
 import {
   effectiveCapacity,
   onShiftSlots,
-  predictRotation
+  predictRotation,
+  reshuffleDownstream
 } from "@/lib/rotation";
 import {
   PSG_CHOOSE_IN,
@@ -688,6 +689,26 @@ function DayBoard({
     );
   }
 
+  // Re-run round-robin across every rotation-team row after the given
+  // anchor row (this hour + all subsequent hours). One undo step. The
+  // anchor row itself is preserved as-is — the clerk's manual edit to
+  // that row already landed via the normal dropdown commit path.
+  function cascadeFromRow(hour: number, sortOrder: number) {
+    update(
+      (prev) => {
+        const reshuffled = reshuffleDownstream(
+          prev.assignments,
+          hour,
+          sortOrder,
+          effectiveSlots,
+          prev.roster
+        );
+        return { ...prev, assignments: reshuffled };
+      },
+      `Reshuffled rotation from ${describeHour(hour)}`
+    );
+  }
+
   function deleteRow(id: string) {
     const row = state.assignments.find((a) => a.id === id);
     const where = row ? ` at ${describeHour(row.hourBlock)}` : "";
@@ -1013,6 +1034,7 @@ function DayBoard({
             nedocs={state.nedocs}
             version={dataVersion}
             onUpdateRow={updateRow}
+            onCascadeFromRow={cascadeFromRow}
             onDeleteRow={deleteRow}
             onMaterialize={materializeRow}
             onUpdateNedocs={updateNedocs}
@@ -1056,6 +1078,7 @@ function RotationSheet({
   nedocs,
   version,
   onUpdateRow,
+  onCascadeFromRow,
   onDeleteRow,
   onMaterialize,
   onUpdateNedocs,
@@ -1069,6 +1092,7 @@ function RotationSheet({
   nedocs: Record<number, string>;
   version: number;
   onUpdateRow: (id: string, patch: Partial<Assignment>) => void;
+  onCascadeFromRow: (hour: number, sortOrder: number) => void;
   onDeleteRow: (id: string) => void;
   onMaterialize: (hourBlock: number, sortOrder: number, patch: RowDraft) => void;
   onUpdateNedocs: (hour: number, value: string) => void;
@@ -1113,6 +1137,7 @@ function RotationSheet({
               nedocs={nedocs[hour] ?? ""}
               version={version}
               onUpdateRow={onUpdateRow}
+              onCascadeFromRow={onCascadeFromRow}
               onDeleteRow={onDeleteRow}
               onMaterialize={onMaterialize}
               onUpdateNedocs={onUpdateNedocs}
@@ -1135,6 +1160,7 @@ function HourBand({
   nedocs,
   version,
   onUpdateRow,
+  onCascadeFromRow,
   onDeleteRow,
   onMaterialize,
   onUpdateNedocs,
@@ -1149,6 +1175,7 @@ function HourBand({
   nedocs: string;
   version: number;
   onUpdateRow: (id: string, patch: Partial<Assignment>) => void;
+  onCascadeFromRow: (hour: number, sortOrder: number) => void;
   onDeleteRow: (id: string) => void;
   onMaterialize: (hourBlock: number, sortOrder: number, patch: RowDraft) => void;
   onUpdateNedocs: (hour: number, value: string) => void;
@@ -1222,6 +1249,7 @@ function HourBand({
         nedocs={nedocs}
         version={version}
         onUpdate={(patch) => onUpdateRow(row.id, patch)}
+        onCascade={() => onCascadeFromRow(hour, row.sortOrder)}
         onDelete={() => onDeleteRow(row.id)}
         onUpdateNedocs={(v) => onUpdateNedocs(hour, v)}
         onBulkPaste={(startCol, rowsData) =>
@@ -1282,6 +1310,7 @@ function SheetRow({
   version,
   predictedSlotId,
   onUpdate,
+  onCascade,
   onDelete,
   onMaterialize,
   onUpdateNedocs,
@@ -1299,6 +1328,7 @@ function SheetRow({
   version: number;
   predictedSlotId?: string;
   onUpdate?: (patch: Partial<Assignment>) => void;
+  onCascade?: () => void;
   onDelete?: () => void;
   onMaterialize?: (patch: RowDraft) => void;
   onUpdateNedocs: (value: string) => void;
@@ -1400,7 +1430,7 @@ function SheetRow({
   }
 
   return (
-    <tr className="sheet-row">
+    <tr className={`sheet-row${isFirst ? " sheet-row-hour-first" : ""}`}>
       {isFirst ? (
         <td rowSpan={totalRows} className="sheet-hour">
           {hourLabel(hour)}
@@ -1506,14 +1536,26 @@ function SheetRow({
             className="sheet-input"
           />
           {row ? (
-            <button
-              onClick={onDelete}
-              className="sheet-row-delete"
-              aria-label="Delete row"
-              title="Delete row"
-            >
-              ×
-            </button>
+            <>
+              {onCascade ? (
+                <button
+                  onClick={onCascade}
+                  className="sheet-row-shuffle"
+                  aria-label="Reshuffle rotation from this row"
+                  title="Reshuffle: re-run round-robin for every rotation row after this one (this hour + later hours)"
+                >
+                  ↻
+                </button>
+              ) : null}
+              <button
+                onClick={onDelete}
+                className="sheet-row-delete"
+                aria-label="Delete row"
+                title="Delete row"
+              >
+                ×
+              </button>
+            </>
           ) : null}
         </div>
       </td>

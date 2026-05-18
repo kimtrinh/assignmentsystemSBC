@@ -150,6 +150,12 @@ textarea {
   height: 24px;
 }
 
+/* Bold dividing line between hour blocks. The first row of each hour
+ * picks up a thicker top border so the rotation grid reads as bands. */
+.sheet-row-hour-first td {
+  border-top: 2px solid #5f6368;
+}
+
 .sheet-cell {
   position: relative;
   padding: 0;
@@ -262,6 +268,29 @@ textarea {
 .sheet-row-delete:hover {
   color: #b91c1c;
   background: #fce8e6;
+}
+
+.sheet-row-shuffle {
+  flex-shrink: 0;
+  width: 20px;
+  height: 22px;
+  margin-right: 2px;
+  border: 0;
+  background: transparent;
+  color: #9aa0a6;
+  font-size: 14px;
+  line-height: 1;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.sheet-row:hover .sheet-row-shuffle {
+  opacity: 1;
+}
+
+.sheet-row-shuffle:hover {
+  color: var(--sheet-red);
+  background: var(--sheet-gold-bg);
 }
 
 .sheet-row-clear {
