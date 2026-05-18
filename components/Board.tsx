@@ -1,6 +1,6 @@
 "use client";
 
-import { useContext, useEffect, useMemo, useReducer, useState } from "react";
+import { useContext, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import { IdentityContext, type SessionInfo } from "@/components/AuthGate";
 import { HOUR_BLOCKS, hourLabel } from "@/lib/hours";
 import {
@@ -488,6 +488,14 @@ function DayBoard({
   const [dataVersion, setDataVersion] = useState(0);
   const { displayName, setDisplayName } = useContext(IdentityContext);
 
+  // Mirror current state into a ref so the realtime subscription callback
+  // can compare incoming payloads against the latest local state without
+  // re-subscribing on every change.
+  const stateRef = useRef(state);
+  useEffect(() => {
+    stateRef.current = state;
+  });
+
   useEffect(() => {
     // Local-first: paint immediately from localStorage, then refresh from
     // Supabase when configured.
@@ -510,6 +518,11 @@ function DayBoard({
     });
 
     const unsubscribe = subscribeToDay(site.code, date, (remote) => {
+      // Self-echo guard: if the incoming payload matches what we already
+      // hold locally, it's a broadcast of our own write. Applying it would
+      // bump dataVersion and remount every cell input (the version is in
+      // their React `key`), interrupting in-flight typing / pastes.
+      if (JSON.stringify(stateRef.current) === JSON.stringify(remote)) return;
       dispatch({ type: "syncFromRemote", state: remote });
       setDataVersion((v) => v + 1);
     });

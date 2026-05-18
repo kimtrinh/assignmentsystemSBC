@@ -41,17 +41,38 @@ const FMC_SLOTS: ShiftSlot[] = [
   { id: "fmc-dod-4",       label: "DOD 4 12a-6a",   team: "DOD",  startTime: "00:00", endTime: "06:00" }
 ];
 
-export const SITES: SiteDef[] = [
-  { code: "FMC", name: "Kaiser Fontana", slots: FMC_SLOTS },
-  { code: "ONT", name: "Kaiser Ontario", slots: [] }
+const OMC_SLOTS: ShiftSlot[] = [
+  { id: "omc-5a-3p",       label: "OMC - 5a-3p",        team: "OMC",  startTime: "05:00", endTime: "15:00" },
+  { id: "omc-6a-4p",       label: "OMC - 6a-4p",        team: "OMC",  startTime: "06:00", endTime: "16:00" },
+  { id: "omc-8a-8p",       label: "OMC - 8a-8p",        team: "OMC",  startTime: "08:00", endTime: "20:00" },
+  { id: "omc-10a-10p",     label: "OMC - 10a-10p",      team: "OMC",  startTime: "10:00", endTime: "22:00" },
+  { id: "omc-12p-12a",     label: "OMC - 12p-12a",      team: "OMC",  startTime: "12:00", endTime: "00:00" },
+  { id: "omc-3p-1a",       label: "OMC - 3p-1a",        team: "OMC",  startTime: "15:00", endTime: "01:00" },
+  { id: "omc-4p-2a",       label: "OMC - 4p-2a",        team: "OMC",  startTime: "16:00", endTime: "02:00" },
+  { id: "omc-1-8p-8a",     label: "OMC - (1) 8p-8a",    team: "OMC",  startTime: "20:00", endTime: "08:00" },
+  { id: "omc-2-8p-8a",     label: "OMC - (2) 8p-8a",    team: "OMC",  startTime: "20:00", endTime: "08:00" },
+  { id: "omc-10p-8a",      label: "OMC - 10p-8a",       team: "OMC",  startTime: "22:00", endTime: "08:00" },
+  { id: "omc-dod-1",       label: "OMC - DOD 1 6a-12p", team: "DOD",  startTime: "06:00", endTime: "12:00" },
+  { id: "omc-dod-2",       label: "OMC - DOD 2 12p-6p", team: "DOD",  startTime: "12:00", endTime: "18:00" },
+  { id: "omc-dod-3",       label: "OMC - DOD 3 6p-12a", team: "DOD",  startTime: "18:00", endTime: "00:00" },
+  { id: "omc-dod-4",       label: "OMC - DOD 4 12a-6a", team: "DOD",  startTime: "00:00", endTime: "06:00" },
+  { id: "omc-flex-9a-9p",  label: "OMC - Flex 9a-9p",   team: "FLEX", startTime: "09:00", endTime: "21:00" },
+  { id: "omc-flex-2p-2a",  label: "OMC - Flex 2p-2a",   team: "FLEX", startTime: "14:00", endTime: "02:00" },
+  { id: "omc-mp-3p-3a",    label: "OMC - MP 3p-3a",     team: "MP",   startTime: "15:00", endTime: "03:00" }
 ];
 
-export const TEAM_ORDER = ["Red", "Blue", "PEDS", "PITT", "FLEX", "DOD"];
+export const SITES: SiteDef[] = [
+  { code: "FMC", name: "Kaiser Fontana", slots: FMC_SLOTS },
+  { code: "ONT", name: "Kaiser OMC",     slots: OMC_SLOTS }
+];
+
+export const TEAM_ORDER = ["Red", "Blue", "OMC", "PEDS", "PITT", "FLEX", "MP", "DOD"];
 
 // Teams whose providers participate in the Main ED rotation grid.
-// FLEX / PEDS / PITT / DOD are excluded: they cover different patient
-// pools and are not part of the round-robin (see docs/current-system.md §5.1).
-export const MAIN_ROTATION_TEAMS = ["Red", "Blue"];
+// FLEX / PEDS / PITT / DOD / MP cover different patient pools and are not
+// part of the round-robin (see docs/current-system.md §5.1). OMC is the
+// catch-all team for Kaiser OMC, which doesn't split into Red/Blue.
+export const MAIN_ROTATION_TEAMS = ["Red", "Blue", "OMC"];
 
 export function getSite(code: string): SiteDef | undefined {
   return SITES.find((s) => s.code === code);
