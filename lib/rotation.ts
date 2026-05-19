@@ -137,9 +137,21 @@ export function predictRotation(
   const poolIds = new Set(pool.map((s) => s.id));
   const slotIndex = new Map(allSlots.map((s, i) => [s.id, i]));
 
-  // Find the cycle pointer: index in `allSlots` of the last-picked provider
-  // across the entire day up to and including this hour. If none, start at
-  // -1 so the first search begins at allSlots[0].
+  // Walk history to compute two cycle pointers:
+  //
+  // - cyclePos advances on every historical pick (regular + bolus). It's
+  //   used as the search start during a bolus pick so that two bolus
+  //   providers in the same hour interleave correctly.
+  //
+  // - regularCyclePos advances only on non-bolus picks. It's used as the
+  //   search start during a non-bolus pick. This is what makes the regular
+  //   round-robin survive a bolus run intact: when a new provider comes on
+  //   and takes their 3 catch-up patients, those bolus picks shouldn't move
+  //   the underlying cycle. After the bolus, the next non-bolus pick
+  //   resumes from wherever the regular cycle was before the bolus started.
+  //
+  // A historical pick is "bolus" iff effectiveCapacity for the slot at that
+  // hour was > 2. That's the same condition used to gate bolusMode below.
   const currentH = hourIndex(hour);
   const sortedA = [...allAssignments].sort((a, b) => {
     const ha = hourIndex(a.hourBlock);
@@ -147,13 +159,20 @@ export function predictRotation(
     if (ha !== hb) return ha - hb;
     return a.sortOrder - b.sortOrder;
   });
-  let lastPicked: string | null = null;
+  let cyclePos = -1;
+  let regularCyclePos = -1;
   for (const a of sortedA) {
     if (hourIndex(a.hourBlock) > currentH) break;
     if (!a.shiftSlotId) continue;
-    lastPicked = a.shiftSlotId;
+    const idx = slotIndex.get(a.shiftSlotId);
+    if (idx === undefined) continue;
+    cyclePos = idx;
+    const slot = allSlots[idx];
+    const histCap = effectiveCapacity(slot, a.hourBlock, roster, allAssignments);
+    if (histCap <= 2) {
+      regularCyclePos = idx;
+    }
   }
-  let cyclePos = lastPicked != null ? slotIndex.get(lastPicked) ?? -1 : -1;
 
   function eligible(id: string, anyBolus: boolean): boolean {
     if (!poolIds.has(id)) return false;
@@ -174,13 +193,15 @@ export function predictRotation(
   let pickedId = "";
   for (let step = 0; step <= steps; step++) {
     const bolusMode = anyBolusAvailable();
+    const startPos = bolusMode ? cyclePos : regularCyclePos;
     let found: string | null = null;
     for (let i = 1; i <= allSlots.length; i++) {
-      const idx = (cyclePos + i + allSlots.length) % allSlots.length;
+      const idx = (startPos + i + allSlots.length) % allSlots.length;
       const s = allSlots[idx];
       if (eligible(s.id, bolusMode)) {
         found = s.id;
         cyclePos = idx;
+        if (!bolusMode) regularCyclePos = idx;
         break;
       }
     }
