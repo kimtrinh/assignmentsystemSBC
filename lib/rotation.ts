@@ -2,7 +2,7 @@ import type { Assignment } from "./storage";
 import type { ShiftSlot } from "./shiftTemplate";
 import { MAIN_ROTATION_TEAMS } from "./shiftTemplate";
 import { effectiveShift } from "./effectiveShift";
-import { HOUR_BLOCKS } from "./hours";
+import { HOUR_BLOCKS, NIGHT_FAIRSHARE_HOUR } from "./hours";
 import { isRotationActive, psgCapacityAt } from "./psg";
 
 function hourIndex(hour: number): number {
@@ -95,6 +95,74 @@ export function effectiveCapacity(
   return cap;
 }
 
+// At night, the first patient at the top of each hour is repeatedly the
+// sickest one — the clerk pre-assigns L1/L2 walk-ins to whichever provider
+// the predictor shows in position 0. Strict round-robin lets the same
+// provider land that position several hours in a row (their slot happens
+// to be one past the regularCyclePos at hour rollover), which is unfair.
+//
+// Starting at NIGHT_FAIRSHARE_HOUR, override the position-0 pick: choose
+// the on-shift rotation provider with the fewest prior "first at top of
+// hour" tallies in the night window so far. Tiebreak by canonical slot
+// order. History is read from actual assignments, so a clerk's manual
+// override of a top-of-hour pick correctly compensates the next hour's
+// fair-share count.
+//
+// Returns the picked slot id, or null if no eligible candidate.
+function nightFirstUpAnchor(
+  hour: number,
+  allAssignments: Assignment[],
+  pool: ShiftSlot[],
+  allSlots: ShiftSlot[],
+  remaining: Map<string, number>,
+  caps: Map<string, number>
+): string | null {
+  const candidates = pool.filter(
+    (s) => (caps.get(s.id) ?? 0) > 0 && (remaining.get(s.id) ?? 0) > 0
+  );
+  if (candidates.length === 0) return null;
+
+  const currentH = hourIndex(hour);
+  const nightStart = hourIndex(NIGHT_FAIRSHARE_HOUR);
+  const byHour = new Map<number, Assignment[]>();
+  for (const a of allAssignments) {
+    const hi = hourIndex(a.hourBlock);
+    if (hi < nightStart || hi >= currentH) continue;
+    if (!a.shiftSlotId) continue;
+    const list = byHour.get(a.hourBlock) ?? [];
+    list.push(a);
+    byHour.set(a.hourBlock, list);
+  }
+  const firstUpCount = new Map<string, number>();
+  for (const list of byHour.values()) {
+    list.sort((a, b) => a.sortOrder - b.sortOrder);
+    const first = list[0];
+    firstUpCount.set(
+      first.shiftSlotId,
+      (firstUpCount.get(first.shiftSlotId) ?? 0) + 1
+    );
+  }
+
+  let minCount = Number.MAX_SAFE_INTEGER;
+  for (const s of candidates) {
+    const c = firstUpCount.get(s.id) ?? 0;
+    if (c < minCount) minCount = c;
+  }
+  const slotIndex = new Map(allSlots.map((s, i) => [s.id, i]));
+  let bestId: string | null = null;
+  let bestIdx = Number.MAX_SAFE_INTEGER;
+  for (const s of candidates) {
+    const c = firstUpCount.get(s.id) ?? 0;
+    if (c !== minCount) continue;
+    const idx = slotIndex.get(s.id) ?? Number.MAX_SAFE_INTEGER;
+    if (idx < bestIdx) {
+      bestIdx = idx;
+      bestId = s.id;
+    }
+  }
+  return bestId;
+}
+
 // Round-robin pick driven by the per-hour PSG taper from the FMC PSG sheet,
 // using effective capacity (real provider times + rule adjustments).
 //
@@ -161,9 +229,11 @@ export function predictRotation(
   });
   let cyclePos = -1;
   let regularCyclePos = -1;
+  let firstPickOfHour = true;
   for (const a of sortedA) {
     if (hourIndex(a.hourBlock) > currentH) break;
     if (!a.shiftSlotId) continue;
+    if (a.hourBlock === hour) firstPickOfHour = false;
     const idx = slotIndex.get(a.shiftSlotId);
     if (idx === undefined) continue;
     cyclePos = idx;
@@ -191,18 +261,41 @@ export function predictRotation(
   }
 
   let pickedId = "";
+  const nightActive = currentH >= hourIndex(NIGHT_FAIRSHARE_HOUR);
   for (let step = 0; step <= steps; step++) {
     const bolusMode = anyBolusAvailable();
     const startPos = bolusMode ? cyclePos : regularCyclePos;
     let found: string | null = null;
-    for (let i = 1; i <= allSlots.length; i++) {
-      const idx = (startPos + i + allSlots.length) % allSlots.length;
-      const s = allSlots[idx];
-      if (eligible(s.id, bolusMode)) {
-        found = s.id;
-        cyclePos = idx;
-        if (!bolusMode) regularCyclePos = idx;
-        break;
+
+    if (step === 0 && firstPickOfHour && !bolusMode && nightActive) {
+      const anchor = nightFirstUpAnchor(
+        hour,
+        allAssignments,
+        pool,
+        allSlots,
+        remaining,
+        caps
+      );
+      if (anchor && eligible(anchor, false)) {
+        const idx = slotIndex.get(anchor);
+        if (idx !== undefined) {
+          found = anchor;
+          cyclePos = idx;
+          regularCyclePos = idx;
+        }
+      }
+    }
+
+    if (!found) {
+      for (let i = 1; i <= allSlots.length; i++) {
+        const idx = (startPos + i + allSlots.length) % allSlots.length;
+        const s = allSlots[idx];
+        if (eligible(s.id, bolusMode)) {
+          found = s.id;
+          cyclePos = idx;
+          if (!bolusMode) regularCyclePos = idx;
+          break;
+        }
       }
     }
 
